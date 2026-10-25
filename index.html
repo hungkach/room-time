@@ -1,0 +1,1049 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>*,*::before,*::after{box-sizing:border-box}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);height:100%}body{margin:0}[hidden]{display:none!important}</style>
+<title>Room Time</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Layout: one-screen app. Menu sheet, then a game screen (top bar, mat stage, touch deck), then a debrief sheet.
+   Look: a wrestling room under gym lights. Blue mat, orange-red zone ring, red singlet accent. Single dark theme by choice. */
+:root{
+  --bg:#0c1722; --wall:#121f2c; --wall-pad:#172838; --mat:#21466b; --mat-deep:#15304b; --zone:#a9472f; --line:#e7ecf0;
+  --ink:#e8edf1; --muted:#8ea2b4; --panel:#13212f; --panel-2:#1b2e41; --edge:#284460;
+  --red:#d6483d; --on-red:#fff6f3; --green:#43b482; --green-soft:rgba(67,180,130,.20); --amber:#e2a23b; --blue:#3f80d6; --p-warm:#56708a;
+  --skin-opp:#b88a6b; --skin-you:#c99c7b; --gear:#1a1f26; --shade:rgba(8,16,24,.74); --dot:rgba(232,237,241,.16);
+  --f-display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --f-body:"Barlow",system-ui,-apple-system,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;overflow:hidden;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+#app{height:100%;display:flex;flex-direction:column;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+/* menu */
+#menu{flex:1;min-height:0;overflow-y:auto;width:100%;max-width:560px;margin:0 auto;padding-block:22px 30px;display:flex;flex-direction:column;gap:22px}
+.brand h1{font-family:var(--f-display);font-weight:700;font-size:3.6rem;line-height:.88;margin:0;letter-spacing:.005em}
+.brand h1 span{color:var(--red)}
+.brand p{margin:8px 0 0;color:var(--muted);font-size:1rem}
+.field{display:flex;flex-direction:column;gap:8px}
+.field .lab{font-size:.85rem;color:var(--muted);letter-spacing:.02em;font-weight:500}
+.seg{display:grid;gap:6px}
+.seg.c4{grid-template-columns:repeat(4,1fr)} .seg.c3{grid-template-columns:repeat(3,1fr)} .seg.c2{grid-template-columns:repeat(2,1fr)}
+.seg button{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:11px 4px;font-family:var(--f-display);font-weight:600;font-size:1.2rem;line-height:1.1}
+.seg button small{display:block;font-family:var(--f-body);font-weight:400;font-size:.72rem;color:var(--muted);margin-top:2px}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.seg button[aria-pressed="true"] small{color:var(--panel-2)}
+.plan{background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.strip{display:flex;gap:3px;height:26px}
+.strip i{flex:1;border-radius:4px;display:block}
+.plan .sum{font-size:.92rem;line-height:1.45;color:var(--ink)}
+.plan .sum b{font-family:var(--f-display);font-weight:600;font-size:1.05rem}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.78rem;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend span::before{content:"";width:10px;height:10px;border-radius:3px;background:var(--c)}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.primary,.secondary{border-radius:12px;padding:15px 8px;font-family:var(--f-display);font-weight:700;font-size:1.35rem}
+.primary{background:var(--red);color:var(--on-red);border:0}
+.secondary{background:transparent;border:1px solid var(--edge);color:var(--ink)}
+.how{display:grid;gap:8px;font-size:.88rem;line-height:1.45;color:var(--muted)}
+.how b{color:var(--ink);font-weight:600}
+.reads{display:flex;flex-wrap:wrap;gap:6px}
+.reads span{padding:4px 9px;border-radius:999px;border:1px solid var(--c);color:var(--ink);font-size:.78rem}
+
+/* game */
+#game{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;padding-block:8px 10px}
+#topbar{display:flex;align-items:center;gap:8px}
+#phase{flex:1;min-width:0}
+#phaseName{font-family:var(--f-display);font-weight:600;font-size:1.3rem;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#roundNo{font-size:.78rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+#timer{font-family:var(--f-display);font-weight:700;font-size:2.1rem;line-height:1;font-variant-numeric:tabular-nums;min-width:3.2ch;text-align:right}
+#timer.rest{color:var(--muted)}
+#topbar{gap:6px}
+.ibtn{width:36px;height:36px;border-radius:10px;background:var(--panel);border:1px solid var(--edge);display:grid;place-items:center;flex:none}
+.ibtn svg{width:18px;height:18px;stroke:var(--ink);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#stage{flex:1;min-height:0;position:relative;border-radius:14px;overflow:hidden;background:var(--wall)}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#deck{height:clamp(170px,31vh,270px);display:grid;grid-template-columns:1.3fr 1fr;gap:10px;flex:none}
+#pad{position:relative;border-radius:14px;background:var(--panel);border:1px solid var(--edge);touch-action:none;overflow:hidden}
+#padBand{position:absolute;left:0;right:0;background:var(--green-soft);border-top:1px dashed var(--green);border-bottom:1px dashed var(--green)}
+#padBand em{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-style:normal;font-size:.72rem;color:var(--green)}
+#padDot{position:absolute;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:2px solid var(--ink);background:var(--dot);pointer-events:none}
+.padTxt{position:absolute;left:10px;font-size:.72rem;color:var(--muted);pointer-events:none}
+.padTxt.t{top:8px} .padTxt.b{bottom:8px}
+.padHint{position:absolute;left:10px;right:10px;bottom:26px;font-size:.78rem;line-height:1.3;color:var(--ink);opacity:.8;pointer-events:none}
+#btns{display:grid;grid-template-rows:1.35fr 1fr 1fr;gap:8px}
+.move{border-radius:14px;border:1px solid var(--edge);background:var(--panel-2);font-family:var(--f-display);font-weight:700;font-size:1.45rem;touch-action:none;transition:transform .06s,filter .06s}
+#bSprawl{background:var(--red);border-color:var(--red);color:var(--on-red)}
+.move.hit{transform:scale(.96);filter:brightness(1.25)}
+
+/* debrief */
+#debrief{position:fixed;inset:0;background:var(--bg);overflow-y:auto;z-index:5;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+#debrief .in{max-width:560px;margin:0 auto;padding-block:24px 34px;display:flex;flex-direction:column;gap:20px}
+#debrief h2{font-family:var(--f-display);font-weight:700;font-size:2.6rem;line-height:.9;margin:0}
+#debrief .sub{color:var(--muted);margin-top:6px}
+.big3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.big3 div{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:12px 10px}
+.big3 b{display:block;font-family:var(--f-display);font-weight:700;font-size:2.2rem;line-height:1;font-variant-numeric:tabular-nums}
+.big3 span{font-size:.78rem;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.card h3{margin:0;font-size:.85rem;font-weight:500;color:var(--muted);letter-spacing:.02em}
+.bars{display:flex;align-items:flex-end;gap:4px;height:110px}
+.bars div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;height:100%;min-width:0}
+.bars i{display:block;width:100%;border-radius:4px 4px 0 0;background:var(--c)}
+.bars span{font-size:.68rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.note{font-size:.95rem;line-height:1.5}
+.rows{display:grid;gap:6px;font-size:.92rem}
+.rows div{display:flex;justify-content:space-between;gap:10px;font-variant-numeric:tabular-nums}
+.rows div span:first-child{color:var(--muted)}
+
+@media (orientation:landscape) and (max-height:540px){
+  #game{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,36%);grid-template-rows:auto minmax(0,1fr);}
+  #topbar{grid-column:1/-1}
+  #deck{height:auto}
+}
+@media (prefers-reduced-motion:reduce){.move{transition:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <section id="menu">
+    <div class="brand">
+      <h1>Room <span>Time</span></h1>
+      <p>Wrestling training simulator. Touch prototype: the pad stands in for your hips and feet, the buttons for your big moves.</p>
+    </div>
+
+    <div class="field">
+      <div class="lab">Session length</div>
+      <div class="seg c4" id="segLen">
+        <button id="len15" data-v="15">15<small>min</small></button>
+        <button id="len20" data-v="20">20<small>min</small></button>
+        <button id="len25" data-v="25">25<small>min</small></button>
+        <button id="len30" data-v="30">30<small>min</small></button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="lab">Pace</div>
+      <div class="seg c3" id="segPace">
+        <button id="paceS" data-v="steady">Steady<small>longer reads</small></button>
+        <button id="paceM" data-v="match">Match<small>default</small></button>
+        <button id="paceH" data-v="hard">Hard<small>short tells</small></button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="lab">Preview</div>
+      <div class="seg c2" id="segQuick">
+        <button id="qOn" data-v="1">Quick look<small>30 s rounds, 8 s resets</small></button>
+        <button id="qOff" data-v="0">Full length<small>2:00 rounds, 0:30 resets</small></button>
+      </div>
+    </div>
+
+    <div class="plan">
+      <div class="strip" id="strip"></div>
+      <div class="sum" id="planSum"></div>
+      <div class="legend">
+        <span style="--c:var(--p-warm)">Warm-in</span>
+        <span style="--c:var(--blue)">Technique</span>
+        <span style="--c:var(--amber)">Situations</span>
+        <span style="--c:var(--red)">Live go</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="startBtn">Start session</button>
+      <button class="secondary" id="autoBtn">Watch auto-play</button>
+    </div>
+
+    <div class="how">
+      <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
+      <div><b>Sprawl, shot, snap:</b> your big moves. Each round, the coach calls them and the drill partner shows the look.</div>
+      <div><b>Live go reads:</b></div>
+      <div class="reads">
+        <span style="--c:var(--red)">red dip = shot coming, sprawl</span>
+        <span style="--c:var(--amber)">amber arms = tie-up, snap</span>
+        <span style="--c:var(--green)">green reach = opening, shoot</span>
+        <span style="--c:var(--zone)">orange drive = he's pushing you out, circle off</span>
+      </div>
+      <div>After a stuffed shot or a snap, slide left or right to go behind. Hips high for too long and he attacks more.</div>
+      <div><b>Your floor:</b> the strip at the bottom of the mat is your training space, wall to wall. The orange ends are the edge of the mat. Step out in the live go and he scores 1, so circle off the edge. Near center you move freely; past halfway his circling drifts you back home, and at the wall he cuts you off.</div>
+      <div><b>Skip:</b> the skip button ends the current round, keeps its data, and starts the next round with no reset.</div>
+    </div>
+  </section>
+
+  <section id="game" hidden>
+    <div id="topbar">
+      <div id="phase"><div id="phaseName">Warm-in</div><div id="roundNo">Round 1 of 6</div></div>
+      <div id="timer">0:30</div>
+      <button class="ibtn" id="skipBtn" aria-label="Skip to next round"><svg viewBox="0 0 24 24"><path d="M5 5l9 7-9 7z"/><path d="M18 5v14"/></svg></button>
+      <button class="ibtn" id="pauseBtn" aria-label="Pause"><svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg></button>
+      <button class="ibtn" id="muteBtn" aria-label="Mute"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path id="muteWave" d="M16.5 8.5a5 5 0 0 1 0 7"/></svg></button>
+      <button class="ibtn" id="endBtn" aria-label="End session"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="stage"><canvas id="cv"></canvas></div>
+    <div id="deck">
+      <div id="pad">
+        <div id="padBand"><em>stance</em></div>
+        <span class="padTxt t">Tall</span>
+        <span class="padTxt b">Deep</span>
+        <div class="padHint" id="padHint">Hold here. Slide to move.</div>
+        <div id="padDot" hidden></div>
+      </div>
+      <div id="btns">
+        <button class="move" id="bSprawl">Sprawl</button>
+        <button class="move" id="bShot">Shot</button>
+        <button class="move" id="bSnap">Snap</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section id="debrief" hidden><div class="in" id="debriefIn"></div></section>
+
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const css = getComputedStyle(document.documentElement);
+const tok = n => css.getPropertyValue(n).trim();
+const COL = {};
+['--bg','--wall','--wall-pad','--mat','--mat-deep','--zone','--line','--ink','--muted','--red','--green','--amber','--blue','--p-warm','--skin-opp','--skin-you','--gear','--shade','--panel','--panel-2'].forEach(n => COL[n.slice(2)] = tok(n));
+
+const BAND = {lo:0.32, hi:0.58};
+const PACE = {
+  steady:{gap:[3.2,5.0], win:1.6,  tell:0.78, opening:1.0,  decide:[1.6,2.8], cap:24},
+  match: {gap:[2.4,3.8], win:1.25, tell:0.62, opening:0.85, decide:[1.2,2.2], cap:32},
+  hard:  {gap:[1.8,2.9], win:0.95, tell:0.46, opening:0.7,  decide:[0.9,1.7], cap:40}
+};
+const LAYOUT = {15:{tech:2,sit:1,live:[2]}, 20:{tech:2,sit:2,live:[3]}, 25:{tech:2,sit:1,live:[3,3]}, 30:{tech:3,sit:2,live:[3,3]}};
+const PHASE = {warm:{name:'Warm-in',c:'p-warm'}, tech:{name:'Technique',c:'blue'}, sit:{name:'Situations',c:'amber'}, live:{name:'Live go',c:'red'}};
+const SINGLE = {
+  left:{label:'Circle left',say:'Circle left'}, right:{label:'Circle right',say:'Circle right'},
+  level:{label:'Level change',say:'Level'}, sprawl:{label:'Sprawl',say:'Sprawl'},
+  shot:{label:'Shot',say:'Shot'}, snap:{label:'Snap',say:'Snap'}
+};
+const CHAINS = [
+  {label:'Sprawl, re-shot', seq:['sprawl','shot'], say:'Sprawl, re-shot'},
+  {label:'Sprawl, go behind', seq:['sprawl','move'], say:'Sprawl, go behind'},
+  {label:'Snap, go behind', seq:['snap','move'], say:'Snap, go behind'},
+  {label:'Level change, shot', seq:['level','shot'], say:'Level, shot'}
+];
+const NUMW = ['zero','one','two','three'];
+
+const rand = (a,b) => a + Math.random()*(b-a);
+const pick = a => a[Math.floor(Math.random()*a.length)];
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const lerp = (a,b,t) => a + (b-a)*t;
+const ease = t => { t = clamp(t,0,1); return t*t*(3-2*t); };
+const fmtClock = s => { s = Math.max(0, Math.ceil(s)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); };
+const ms = s => Math.round(s*1000) + ' ms';
+
+/* ---------- settings ---------- */
+let settings = {len:15, pace:'match', quick:true};
+try { const s = JSON.parse(localStorage.getItem('roomtime.settings') || 'null'); if (s && LAYOUT[s.len] && PACE[s.pace]) settings = Object.assign(settings, s); } catch(e) {}
+let muted = false;
+function saveSettings(){ try { localStorage.setItem('roomtime.settings', JSON.stringify(settings)); } catch(e) {} }
+
+function buildPlan(len){
+  const L = LAYOUT[len], rounds = [];
+  rounds.push({phase:'warm', k:0, of:1});
+  for (let i=0;i<L.tech;i++) rounds.push({phase:'tech', k:i, of:L.tech});
+  for (let i=0;i<L.sit;i++) rounds.push({phase:'sit', k:i, of:L.sit});
+  L.live.forEach((periods,g) => { for (let p=1;p<=periods;p++) rounds.push({phase:'live', go:g, goCount:L.live.length, period:p, periods}); });
+  return rounds;
+}
+
+function renderMenu(){
+  [['segLen','len'],['segPace','pace'],['segQuick','quick']].forEach(([id,key]) => {
+    $(id).querySelectorAll('button').forEach(b => {
+      const v = key==='len' ? +b.dataset.v : key==='quick' ? b.dataset.v==='1' : b.dataset.v;
+      b.setAttribute('aria-pressed', String(settings[key] === v));
+    });
+  });
+  const plan = buildPlan(settings.len);
+  $('strip').innerHTML = plan.map(r => `<i style="background:var(--${PHASE[r.phase].c})"></i>`).join('');
+  const L = LAYOUT[settings.len];
+  const work = settings.quick ? 30 : 120, rest = settings.quick ? 8 : 30;
+  const total = plan.length*work + (plan.length-1)*rest;
+  const goTxt = L.live.length > 1 ? `two live goes of ${L.live[0]} periods` : `a ${L.live[0]}-period live go`;
+  $('planSum').innerHTML = `<b>${plan.length} rounds</b> · warm-in, technique ×${L.tech}, situations ×${L.sit}, then ${goTxt}. ` +
+    (settings.quick ? `Quick look runs about ${fmtClock(total)} so you can see the whole arc; full length is ${settings.len}:00.` : `Runs ${fmtClock(total)}.`);
+}
+$('segLen').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.len = +b.dataset.v; saveSettings(); renderMenu(); });
+$('segPace').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.pace = b.dataset.v; saveSettings(); renderMenu(); });
+$('segQuick').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.quick = b.dataset.v==='1'; saveSettings(); renderMenu(); });
+renderMenu();
+
+/* ---------- audio ---------- */
+let AC = null;
+function ensureAudio(){ try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch(e) {} }
+function tone(freq, dur, type='sine', vol=0.15, when=0, slide=0){
+  if (!AC || muted) return;
+  try {
+    const t = AC.currentTime + when, o = AC.createOscillator(), g = AC.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slide) o.frequency.exponentialRampToValueAtTime(slide, t+dur);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t+0.01); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+    o.connect(g).connect(AC.destination); o.start(t); o.stop(t+dur+0.03);
+  } catch(e) {}
+}
+const sfx = {
+  whistle(){ for (let i=0;i<7;i++) tone(2850 + (i%2)*140, 0.085, 'sine', 0.09, i*0.07); },
+  tick(){ tone(1250, 0.05, 'square', 0.05); },
+  buzzer(){ tone(150, 0.75, 'sawtooth', 0.1); tone(152, 0.75, 'square', 0.04); },
+  good(){ tone(660, 0.1, 'triangle', 0.14); tone(990, 0.16, 'triangle', 0.14, 0.09); },
+  bad(){ tone(330, 0.2, 'triangle', 0.14); tone(220, 0.28, 'triangle', 0.14, 0.16); },
+  thud(){ tone(110, 0.16, 'sine', 0.25, 0, 45); },
+  blip(){ tone(880, 0.05, 'triangle', 0.08); },
+  miss(){ tone(260, 0.12, 'square', 0.05); }
+};
+function say(text, interrupt=true){
+  if (muted || !('speechSynthesis' in window)) return;
+  try {
+    if (interrupt) speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.rate = 1.12; u.pitch = 0.92; u.volume = 1;
+    speechSynthesis.speak(u);
+  } catch(e) {}
+}
+
+/* ---------- game state ---------- */
+let S = null, wakeLock = null;
+const cv = $('cv'), ctx = cv.getContext('2d');
+let dpr = 1, W = 300, H = 300;
+function resize(){
+  const r = cv.getBoundingClientRect(); dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = Math.max(1, r.width); H = Math.max(1, r.height);
+  cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
+  layoutPad();
+}
+window.addEventListener('resize', resize);
+
+function startSession(auto){
+  ensureAudio();
+  const P = PACE[settings.pace];
+  S = {
+    auto, P, len:settings.len, plan:buildPlan(settings.len), workDur:settings.quick?30:120, restDur:settings.quick?8:30,
+    r:0, mode:'work', time:0, clock:0, paused:false,
+    level:1, padActive:false, padTarget:1, youX:0, vx:0, latchL:false, latchR:false, hist:[], lastLevelEvt:-9,
+    action:null, preLevel:1, recoverFrom:null, explosive:0, cap:Math.round(P.cap*settings.len/15), capSaid:false,
+    bandEMA:1, offAngle:0, cue:null, nextCueAt:0, lastCue:null,
+    opp:{x:0, vx:0, state:'circle', t:0, dur:2, fake:false, tellT:0},
+    pose:{crouch:0.45, lean:0.38, arms:0, reach:0, head:0, scale:1, dy:0},
+    rounds:[], goes:[], score:{you:0, opp:0},
+    callout:null, coachLine:null, lastCorrection:-99, hiT:0, loT:0, lastMoveT:0,
+    bot:{q:[], drift:0, lapseUntil:0, dipUntil:0, vxUntil:0, vxDir:0}, R:null, restNote:'',
+    skipRest:false, lastCutT:-9, pressOff:0, pressDir:1
+  };
+  $('menu').hidden = true; $('debrief').hidden = true; $('game').hidden = false;
+  $('padHint').hidden = auto; $('padDot').hidden = true;
+  requestAnimationFrame(() => { resize(); });
+  say('Room time.', true);
+  try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(l => wakeLock = l).catch(() => {}); } catch(e) {}
+  startRound();
+}
+function quit(){
+  try { speechSynthesis.cancel(); } catch(e) {}
+  try { wakeLock && wakeLock.release(); } catch(e) {}
+  S = null; $('game').hidden = true; $('debrief').hidden = true; $('menu').hidden = false; renderMenu();
+}
+
+function roundTitle(rd){
+  if (rd.phase === 'live') return `Live go${rd.goCount>1 ? ' '+(rd.go+1) : ''} · period ${rd.period}`;
+  return PHASE[rd.phase].name + (rd.of > 1 ? ' ' + (rd.k+1) : '');
+}
+function roundBlurb(rd){
+  if (rd.phase === 'warm') return 'motion and level changes';
+  if (rd.phase === 'tech') return rd.k === 0 ? 'motion, level changes, sprawls' : 'adds shots and snaps';
+  if (rd.phase === 'sit') return 'chains off the first move';
+  return rd.period === 1 ? 'live go, period 1' : 'period ' + rd.period;
+}
+
+function startRound(){
+  const rd = S.plan[S.r];
+  S.mode = 'work'; S.clock = S.workDur;
+  S.R = {phase:rd.phase, work:0, inBand:0, reactions:[], recoveries:[], hits:0, misses:0};
+  S.cue = null; S.nextCueAt = S.time + 2.0; S.lastMoveT = S.time; S.hiT = 0; S.loT = 0; S.offAngle = 0;
+  S.lastCorrection = S.time - 6; S.bot.q = [];
+  if (rd.phase === 'live') { if (rd.period === 1) S.score = {you:0, opp:0}; S.opp.x = 0; setOpp('circle', 1.6); }
+  else setOpp('circle', 999);
+  sfx.whistle();
+  let intro;
+  if (rd.phase === 'warm') intro = 'Warm in. Motion and level changes.';
+  else if (rd.phase === 'tech') intro = rd.k === 0 ? 'Technique. Motion, level, sprawl.' : 'Technique. Adding shots and snaps.';
+  else if (rd.phase === 'sit') intro = 'Situations. Chains off the first move.';
+  else intro = rd.period === 1 ? `Live go${rd.goCount>1 ? ' ' + NUMW[rd.go+1] : ''}. Period one.` : `Period ${NUMW[rd.period]}.`;
+  setTimeout(() => { if (S && S.mode === 'work') say(intro, false); }, 650);
+  callout(roundTitle(S.plan[S.r]), roundBlurb(rd), 'info');
+}
+
+function endWork(){
+  sfx.buzzer();
+  const rd = S.plan[S.r], R = S.R;
+  S.rounds.push(R); S.cue = null; S.action = null; S.recoverFrom = null;
+  if (rd.phase === 'live' && rd.period === rd.periods) S.goes.push({you:S.score.you, opp:S.score.opp});
+  if (S.r >= S.plan.length - 1) { finish(); return; }
+  if (S.skipRest) { S.skipRest = false; S.r++; startRound(); return; }
+  S.mode = 'rest'; S.clock = S.restDur;
+  const pct = Math.round(100*R.inBand/Math.max(R.work, 0.01));
+  let spoken, shown;
+  if (rd.phase === 'live') {
+    const fin = rd.period === rd.periods;
+    shown = `${fin ? 'Final' : 'Score'} ${S.score.you}–${S.score.opp} · in stance ${pct}%`;
+    spoken = `${fin ? 'Final, ' : ''}${S.score.you} to ${S.score.opp}. In stance ${pct} percent.`;
+  } else {
+    const tot = R.hits + R.misses;
+    shown = `In stance ${pct}% · ${R.hits} of ${tot} on time`;
+    spoken = `In stance ${pct} percent. ${R.hits} of ${tot} on time.`;
+  }
+  S.restNote = shown;
+  setOpp('rest', 999);
+  setTimeout(() => { if (S && S.mode === 'rest') say(spoken, false); }, 900);
+}
+function finish(){
+  S.mode = 'done';
+  try { wakeLock && wakeLock.release(); } catch(e) {}
+  buildDebrief();
+}
+
+/* ---------- opponent / drill partner ---------- */
+function setOpp(state, dur, extra){
+  const o = S.opp;
+  o.state = state; o.t = 0; o.dur = dur; o.fake = !!(extra && extra.fake); o.quick = !!(extra && extra.quick);
+  if (state === 'tell') { o.tellT = S.time; sfx.tick(); }
+  if (state === 'press') { S.pressOff = 0; S.pressDir = Math.sign(S.youX) || (Math.random() < 0.5 ? -1 : 1); callout('Driving you out', 'circle off the edge', 'miss'); }
+  if (state === 'reset' && S.mode === 'work' && S.plan[S.r].phase === 'live') setTimeout(() => { if (S && S.mode === 'work') { for (let i = 0; i < 4; i++) tone(2850 + (i%2)*140, 0.08, 'sine', 0.08, i*0.07); } }, 350);
+  if (state === 'opening' || state === 'hand' || state === 'stuffed' || state === 'snapped') o.t0 = S.time;
+  if (S.auto && S.mode === 'work' && S.plan[S.r].phase === 'live') botReactOpp(state, o);
+}
+function decide(){
+  const P = S.P, rd = S.plan[S.r];
+  const pressure = S.bandEMA < 0.6, angle = S.offAngle > 1.0;
+  const w = {circle:2.4, hand:2.0, fake:1.4, shot:2.0, opening:1.6, press:0.6};
+  if (pressure) { w.shot *= 2; w.fake *= 1.3; }
+  if (angle) w.shot *= 1.6;
+  if (Math.abs(S.youX) > 0.35) w.press = 2.2;
+  let sum = 0; for (const k in w) sum += w[k];
+  let x = Math.random()*sum, pickK = 'circle';
+  for (const k in w) { x -= w[k]; if (x <= 0) { pickK = k; break; } }
+  const shrink = 1 - 0.06*(rd.period - 1);
+  if (pickK === 'circle') setOpp('circle', rand(...P.decide));
+  else if (pickK === 'hand') setOpp('hand', 1.35);
+  else if (pickK === 'fake') setOpp('tell', P.tell*shrink, {fake:true});
+  else if (pickK === 'shot') setOpp('tell', P.tell*shrink*(angle ? 0.7 : 1), {fake:false});
+  else if (pickK === 'press') setOpp('press', 2.4);
+  else setOpp('opening', P.opening);
+}
+function score(who, pts, text, sub){
+  S.score[who] += pts;
+  callout(text, sub || (who === 'you' ? 'you +' + pts : 'opponent +' + pts), who === 'you' ? 'good' : 'bad');
+  who === 'you' ? sfx.good() : sfx.bad();
+}
+function liveUpdate(dt){
+  const o = S.opp; o.t += dt;
+  const rel = o.x - S.youX;
+  if (Math.abs(rel) > 0.4) S.offAngle += dt; else S.offAngle = Math.max(0, S.offAngle - dt*2);
+  switch (o.state) {
+    case 'circle': {
+      // redirected walking: near center he circles freely, past halfway his circling leans you home, at the wall he cuts you off
+      let v = o.vx;
+      if (Math.abs(S.youX) > 0.85) {
+        v = -Math.sign(S.youX)*0.6;
+        if (S.time - S.lastCutT > 3) { S.lastCutT = S.time; callout('Cut off', 'reverse', 'info'); }
+      } else if (Math.abs(S.youX) > 0.4) v = o.vx - S.youX*0.35;
+      o.x += v*dt;
+      if (Math.random() < dt*0.9) o.vx = rand(-0.4, 0.4);
+      if (o.x > 0.8 || o.x < -0.8) { o.x = clamp(o.x, -0.8, 0.8); o.vx *= -1; }
+      if (o.t > o.dur) decide();
+      break;
+    }
+    case 'press':
+      // he drives you toward the nearer wall; hold a move back toward center to circle off
+      S.youX = clamp(S.youX + S.pressDir*0.38*dt, -1, 1);
+      o.x = lerp(o.x, S.youX + S.pressDir*0.1, Math.min(1, dt*3));
+      if (S.vx*S.pressDir < -0.35) S.pressOff += dt; else S.pressOff = Math.max(0, S.pressOff - dt);
+      if (S.pressOff > 0.5) { callout('Circled off', 'back to center', 'good'); sfx.blip(); setOpp('circle', rand(...S.P.decide)); }
+      else if (o.t > o.dur) setOpp('circle', rand(...S.P.decide));
+      break;
+    case 'hand': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
+    case 'tell': if (o.t > o.dur) { if (o.fake) setOpp('fakeBack', 0.5); else setOpp('shoot', 0.36); } break;
+    case 'fakeBack': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
+    case 'shoot': if (o.t > o.dur + 0.12) { score('opp', 2, 'Takedown', 'opponent +2'); setOpp('reset', 1.5); } break;
+    case 'opening': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
+    case 'stuffed': case 'snapped': if (o.t > o.dur) { callout('Reset', 'no go-behind', 'info'); setOpp('reset', 1.2); } break;
+    case 'reset':
+      // whistle reset: both wrestlers walk back to center, like a real restart
+      o.x = lerp(o.x, 0, Math.min(1, dt*3)); S.youX = lerp(S.youX, 0, Math.min(1, dt*2.5));
+      if (o.t > o.dur) setOpp('circle', rand(...S.P.decide));
+      break;
+  }
+  if (o.state !== 'reset' && Math.abs(S.youX) >= 0.97) {
+    score('opp', 1, 'Step out', 'opponent +1 · circle off the edge');
+    setOpp('reset', 1.4);
+  }
+}
+function liveInput(type){
+  const o = S.opp;
+  if (type === 'sprawl') {
+    if ((o.state === 'tell' && !o.fake) || o.state === 'shoot') {
+      const rt = S.time - o.tellT; S.R.reactions.push(rt);
+      sfx.thud(); callout('Stuffed', ms(rt) + ' · slide to go behind', 'good'); setOpp('stuffed', 1.15);
+    } else if ((o.state === 'tell' && o.fake) || o.state === 'fakeBack') {
+      callout('Bit on the fake', 'he re-shoots', 'miss'); sfx.miss(); S.bandEMA = Math.max(0, S.bandEMA - 0.15);
+      setOpp('tell', 0.32, {fake:false, quick:true});
+    } else { callout('Nothing there', '', 'info'); }
+  } else if (type === 'shot') {
+    if (o.state === 'opening') {
+      const rt = S.time - o.t0; S.R.reactions.push(rt);
+      if (S.preLevel <= BAND.hi + 0.03) { score('you', 2, 'Takedown', ms(rt) + ' · you +2'); setOpp('reset', 1.5); }
+      else { callout('Too high, stuffed', 'shoot from your stance', 'miss'); sfx.miss(); setOpp('reset', 1.3); }
+    } else if (['circle','hand','fakeBack','tell','reset','press'].includes(o.state)) {
+      if (Math.random() < 0.3) { score('opp', 2, 'Countered', 'no opening · opponent +2'); }
+      else { callout('No opening', 'wait for the reach', 'miss'); sfx.miss(); }
+      setOpp('reset', 1.3);
+    }
+  } else if (type === 'snap') {
+    if (o.state === 'hand') { callout('Snapped', 'slide to go behind', 'good'); sfx.blip(); setOpp('snapped', 1.1); }
+    else callout('No tie', '', 'info');
+  } else if (type === 'left' || type === 'right') {
+    if (o.state === 'stuffed' || o.state === 'snapped') {
+      const rt = S.time - o.t0; score('you', 2, 'Go behind', ms(rt) + ' · you +2'); setOpp('reset', 1.5);
+    }
+  }
+}
+
+/* ---------- drills ---------- */
+function cueWindow(){ const rd = S.plan[S.r]; return S.P.win * (rd.phase === 'warm' ? 1.35 : 1); }
+function pickCue(){
+  const rd = S.plan[S.r], capHit = S.explosive >= S.cap;
+  if (capHit && !S.capSaid) { S.capSaid = true; coach('Explosive cap reached. Level changes and motion only.'); }
+  let pool = null;
+  if (rd.phase === 'warm') pool = ['left','right','level','left','right'];
+  else if (rd.phase === 'tech') pool = rd.k === 0 ? ['left','right','level','sprawl','sprawl'] : ['left','right','level','sprawl','sprawl','shot','snap'];
+  if (pool) {
+    if (capHit) pool = pool.filter(x => x !== 'sprawl' && x !== 'shot');
+    let t = pick(pool); if (t === S.lastCue && Math.random() < 0.6) t = pick(pool);
+    t = homeward(t);
+    S.lastCue = t; return {label:SINGLE[t].label, say:SINGLE[t].say, seq:[t]};
+  }
+  let chains = capHit ? CHAINS.filter(c => !c.seq.includes('sprawl') && !c.seq.includes('shot')) : CHAINS;
+  if (chains.length && Math.random() < 0.7) return pick(chains);
+  const t = homeward(pick(capHit ? ['left','right','level','snap'] : ['sprawl','shot','snap','left','right']));
+  return {label:SINGLE[t].label, say:SINGLE[t].say, seq:[t]};
+}
+// the coach calls the direction that brings you back toward center most of the time
+function homeward(t){
+  if (t !== 'left' && t !== 'right') return t;
+  if (S.youX > 0.3) return Math.random() < 0.8 ? 'left' : 'right';
+  if (S.youX < -0.3) return Math.random() < 0.8 ? 'right' : 'left';
+  return t;
+}
+function partnerFor(step){
+  if (step === 'sprawl') setOpp('shoot', 0.45);
+  else if (step === 'shot') setOpp('opening', cueWindow());
+  else if (step === 'snap') setOpp('hand', cueWindow());
+  else if (step === 'level') setOpp('dip', 0.6);
+}
+function startCue(){
+  const def = pickCue(), w = cueWindow();
+  S.cue = {label:def.label, seq:def.seq, step:0, t0:S.time, stepT:S.time, deadline:S.time + w};
+  callout(def.label, '', 'cue'); say(def.say, true); partnerFor(def.seq[0]);
+  if (S.auto) botReactCue(S.cue);
+}
+function scheduleCue(){
+  const rd = S.plan[S.r];
+  let g = rand(...S.P.gap); if (rd.phase === 'warm') g *= 1.25; if (rd.phase === 'tech' && rd.k >= 2) g *= 0.85;
+  S.nextCueAt = S.time + g;
+}
+function missCue(reason){
+  S.R.misses++; callout(reason, S.cue ? S.cue.label : '', 'miss'); sfx.miss(); S.cue = null; scheduleCue();
+}
+function drillUpdate(dt){
+  const o = S.opp; o.t += dt;
+  if (o.state !== 'circle' && o.t > o.dur) setOpp('circle', 999);
+  o.x = lerp(o.x, Math.sin(S.time*0.6)*0.12, Math.min(1, dt*2));
+  if (S.cue) { if (S.time > S.cue.deadline) missCue('Late'); }
+  else if (S.time >= S.nextCueAt) startCue();
+}
+function drillInput(type){
+  const c = S.cue; if (!c) return;
+  const need = c.seq[c.step];
+  const ok = need === 'move' ? (type === 'left' || type === 'right') : type === need;
+  if (ok) {
+    const rt = S.time - c.stepT;
+    if (c.step === 0) S.R.reactions.push(rt);
+    c.step++;
+    if (c.step >= c.seq.length) {
+      S.R.hits++; sfx.blip();
+      callout(ms(c.seq.length > 1 ? S.time - c.t0 : rt), c.label, 'good');
+      S.cue = null; scheduleCue();
+    } else {
+      c.stepT = S.time; c.deadline = S.time + cueWindow()*0.9; partnerFor(c.seq[c.step]); sfx.blip();
+      callout(SINGLE[c.seq[c.step]] ? SINGLE[c.seq[c.step]].label : 'Go behind', 'then', 'cue');
+    }
+  } else if (['sprawl','shot','snap'].includes(type)) {
+    missCue('Wrong move');
+  }
+}
+
+/* ---------- input ---------- */
+function emit(type){
+  if (!S || S.mode !== 'work' || S.paused) return;
+  if (type === 'left' || type === 'right') S.lastMoveT = S.time;
+  if (S.plan[S.r].phase === 'live') liveInput(type); else drillInput(type);
+}
+const ACT = {sprawl:{dur:0.38}, shot:{dur:0.46}, snap:{dur:0.26}};
+function act(type){
+  if (!S || S.mode !== 'work' || S.paused) return;
+  if (S.action && S.time - S.action.t0 < S.action.dur) return;
+  S.preLevel = S.level;
+  S.action = {type, t0:S.time, dur:ACT[type].dur};
+  if (type !== 'snap') S.explosive++;
+  const btn = {sprawl:'bSprawl', shot:'bShot', snap:'bSnap'}[type];
+  const el = $(btn); el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 120);
+  emit(type);
+}
+['Sprawl','Shot','Snap'].forEach(n => {
+  $('b'+n).addEventListener('pointerdown', e => { e.preventDefault(); if (S && !S.auto) act(n.toLowerCase()); });
+});
+const pad = $('pad'); let padStartX = 0, padPointer = null;
+function layoutPad(){
+  const yHi = (1 - BAND.hi)/0.95, yLo = (1 - BAND.lo)/0.95;
+  $('padBand').style.top = (yHi*100) + '%'; $('padBand').style.height = ((yLo - yHi)*100) + '%';
+}
+function padFromEvent(e){
+  const r = pad.getBoundingClientRect();
+  const yN = clamp((e.clientY - r.top)/r.height, 0, 1);
+  S.padTarget = 1 - yN*0.95;
+  S.vx = clamp((e.clientX - padStartX)/(r.width*0.22), -1, 1);
+  const d = $('padDot'); d.hidden = false; d.style.left = (e.clientX - r.left) + 'px'; d.style.top = (e.clientY - r.top) + 'px';
+}
+pad.addEventListener('pointerdown', e => {
+  if (!S || S.auto) return; e.preventDefault();
+  padPointer = e.pointerId; try { pad.setPointerCapture(e.pointerId); } catch(err) {}
+  padStartX = e.clientX; S.padActive = true; $('padHint').hidden = true; padFromEvent(e);
+});
+pad.addEventListener('pointermove', e => { if (S && !S.auto && e.pointerId === padPointer) padFromEvent(e); });
+const padUp = e => { if (!S || S.auto || e.pointerId !== padPointer) return; padPointer = null; S.padActive = false; S.vx = 0; $('padDot').hidden = true; };
+pad.addEventListener('pointerup', padUp); pad.addEventListener('pointercancel', padUp);
+
+const keys = {};
+window.addEventListener('keydown', e => {
+  if (!S || S.auto || e.repeat) return;
+  keys[e.key] = true;
+  if (e.key === 'j') act('sprawl'); else if (e.key === 'k') act('shot'); else if (e.key === 'l') act('snap');
+  else if (e.key === 'f' && S.padActive) { S.bot.dipUntil = S.time + 0.35; }
+  keyPad();
+});
+window.addEventListener('keyup', e => { if (!S || S.auto) return; keys[e.key] = false; keyPad(); });
+function keyPad(){
+  const anyStance = keys['ArrowDown'] || keys['ArrowLeft'] || keys['ArrowRight'];
+  if (anyStance) { S.padActive = true; S.padTarget = (BAND.lo + BAND.hi)/2; }
+  else if (padPointer === null) S.padActive = false;
+  S.vx = (keys['ArrowRight'] ? 0.8 : 0) - (keys['ArrowLeft'] ? 0.8 : 0);
+}
+
+$('startBtn').addEventListener('click', () => startSession(false));
+$('autoBtn').addEventListener('click', () => startSession(true));
+$('endBtn').addEventListener('click', quit);
+// testing: end this round now (its data is kept) and go straight to the next round with no reset
+$('skipBtn').addEventListener('click', () => {
+  if (!S || S.mode === 'done') return;
+  S.paused = false;
+  try { speechSynthesis.cancel(); } catch(e) {}
+  if (S.mode === 'work') { S.skipRest = true; S.clock = 0; } else S.clock = 0;
+});
+$('pauseBtn').addEventListener('click', () => { if (!S) return; S.paused = !S.paused; if (S.paused) { try { speechSynthesis.cancel(); } catch(e) {} } });
+$('muteBtn').addEventListener('click', () => { muted = !muted; $('muteWave').style.display = muted ? 'none' : ''; if (muted) { try { speechSynthesis.cancel(); } catch(e) {} } });
+
+/* ---------- auto-play bot ---------- */
+function botAt(delay, fn){ S.bot.q.push({at:S.time + delay, fn}); }
+function botFatigue(){ return (S.r/S.plan.length)*0.10 + (1 - S.clock/S.workDur)*0.04; }
+function botMove(dir, dur=0.35){ S.bot.vxDir = dir; S.bot.vxUntil = S.time + dur; }
+const homeDir = () => S.youX > 0.15 ? -1 : S.youX < -0.15 ? 1 : (Math.random() < 0.5 ? -1 : 1);
+function botReactCue(c){
+  if (Math.random() > 0.9) return;
+  let t = 0;
+  c.seq.forEach(step => {
+    t += rand(0.3, 0.6) + botFatigue()*1.5;
+    botAt(t, () => {
+      if (step === 'left' || step === 'right') botMove(step === 'left' ? -1 : 1);
+      else if (step === 'move') botMove(homeDir());
+      else if (step === 'level') S.bot.dipUntil = S.time + 0.35;
+      else act(step);
+    });
+    if (step === 'sprawl' || step === 'shot') t += ACT[step].dur;
+  });
+}
+function botReactOpp(state, o){
+  const rt = rand(0.26, 0.5) + botFatigue()*0.8;
+  const lockLeft = S.action ? Math.max(0, S.action.t0 + S.action.dur - S.time) + 0.05 : 0;
+  if (state === 'tell' && !o.fake) { if (Math.random() < (o.quick ? 0.6 : 0.88)) botAt(Math.max(rt*(o.quick ? 0.7 : 1), lockLeft), () => act('sprawl')); }
+  else if (state === 'tell' && o.fake) { if (Math.random() < 0.3) botAt(rt, () => act('sprawl')); }
+  else if (state === 'opening') { if (Math.random() < 0.7) botAt(rand(0.3, 0.6), () => act('shot')); }
+  else if (state === 'hand') { if (Math.random() < 0.5) botAt(rand(0.3, 0.7), () => act('snap')); }
+  else if (state === 'stuffed' || state === 'snapped') { if (Math.random() < 0.85) botAt(rand(0.3, 0.5) + lockLeft, () => botMove(homeDir())); }
+  else if (state === 'press') { if (Math.random() < 0.8) botAt(rand(0.4, 0.9), () => botMove(-S.pressDir, 0.9)); }
+}
+function botUpdate(dt){
+  const B = S.bot;
+  for (let i = B.q.length - 1; i >= 0; i--) if (S.time >= B.q[i].at) { const f = B.q[i].fn; B.q.splice(i, 1); f(); }
+  if (S.mode !== 'work') { S.padActive = false; S.vx = 0; return; }
+  const prog = S.r/S.plan.length;
+  B.drift += (rand(-1, 1)*0.5 - B.drift*0.6)*dt*2;
+  if (S.time > B.lapseUntil && Math.random() < dt*0.03*(1 + prog*4)) B.lapseUntil = S.time + rand(1.4, 2.4);
+  let target = 0.44 + botFatigue() + B.drift*0.05;
+  if (S.time < B.lapseUntil) target = 0.68;
+  S.padActive = true; S.padTarget = target;
+  if (S.time < B.vxUntil) S.vx = 0.85*B.vxDir;
+  else if (S.plan[S.r].phase === 'live') { const rel = S.opp.x - S.youX; S.vx = Math.abs(rel) > 0.18 ? clamp(rel*1.6, -0.38, 0.38) : 0; }
+  else S.vx = 0;
+}
+
+/* ---------- body model ---------- */
+function updateBody(dt){
+  if (S.auto) botUpdate(dt);
+  if (S.action && S.time - S.action.t0 >= S.action.dur) {
+    if (S.action.type !== 'snap') S.recoverFrom = S.time;
+    S.action = null;
+  }
+  let target = S.padActive ? S.padTarget : 1.0;
+  if (S.time < S.bot.dipUntil) target = Math.max(0.08, target - 0.24);
+  if (S.action) { if (S.action.type === 'sprawl') target = 0.1; else if (S.action.type === 'shot') target = 0.18; }
+  const rate = S.action ? 16 : (S.padActive ? 13 : 4);
+  S.level += (target - S.level)*Math.min(1, dt*rate);
+  S.youX = clamp(S.youX + S.vx*dt*0.9, -1, 1);
+  if (S.vx > 0.45 && !S.latchR) { S.latchR = true; emit('right'); } else if (S.vx < 0.2) S.latchR = false;
+  if (S.vx < -0.45 && !S.latchL) { S.latchL = true; emit('left'); } else if (S.vx > -0.2) S.latchL = false;
+  S.hist.push([S.time, S.level]); while (S.hist.length && S.time - S.hist[0][0] > 0.36) S.hist.shift();
+  if (!S.action && S.time - S.lastLevelEvt > 0.7) {
+    let mx = 0; for (const h of S.hist) mx = Math.max(mx, h[1]);
+    if (mx - S.level > 0.14) { S.lastLevelEvt = S.time; emit('level'); }
+  }
+  const inBand = S.level >= BAND.lo && S.level <= BAND.hi;
+  if (S.recoverFrom !== null && S.mode === 'work') {
+    const el = S.time - S.recoverFrom;
+    if (inBand) { S.R.recoveries.push(el); S.recoverFrom = null; } else if (el > 3) { S.R.recoveries.push(3); S.recoverFrom = null; }
+  }
+  return inBand;
+}
+
+function coach(text){ S.coachLine = {text, t:S.time}; S.lastCorrection = S.time; say(text, false); }
+function callout(text, sub, kind){ if (S) S.callout = {text, sub:sub || '', kind, t:S.time}; }
+
+function update(dt){
+  S.time += dt; S.clock -= dt;
+  const inBand = updateBody(dt);
+  const rd = S.plan[S.r];
+  if (S.mode === 'work') {
+    const credit = inBand || !!S.action;
+    S.R.work += dt; if (credit) S.R.inBand += dt;
+    S.bandEMA += ((credit ? 1 : 0) - S.bandEMA)*Math.min(1, dt/6);
+    if (rd.phase === 'live') liveUpdate(dt); else drillUpdate(dt);
+    if (S.level > BAND.hi + 0.02 && !S.action) S.hiT += dt; else S.hiT = 0;
+    if (S.level < BAND.lo - 0.06 && !S.action) S.loT += dt; else S.loT = 0;
+    if (S.time - S.lastCorrection > 10) {
+      if (S.hiT > 1.4) coach('Stay under the bar.');
+      else if (S.loT > 2.0) coach('Off the floor. Stay springy.');
+      else if (rd.phase === 'live' && S.offAngle > 1.6) coach('Square up. Keep him centered.');
+      else if (rd.phase !== 'live' && Math.abs(S.youX) > 0.85) coach('Edge. Circle back in.');
+      else if ((rd.phase === 'warm' || rd.phase === 'tech') && S.time - S.lastMoveT > 9) coach('Feet moving.');
+    }
+    if (S.clock <= 0) endWork();
+  } else if (S.mode === 'rest') {
+    S.opp.t += dt; S.opp.x = lerp(S.opp.x, 0, Math.min(1, dt*2));
+    if (S.clock <= 0) { S.r++; startRound(); }
+  }
+}
+
+/* ---------- drawing ---------- */
+function poseTarget(o){
+  const base = {crouch:0.45, lean:0.38, arms:0, reach:0, head:0, scale:1, dy:0};
+  switch (o.state) {
+    case 'rest': return {...base, crouch:0.04, lean:0.04};
+    case 'circle': return {...base, crouch:0.45 + Math.sin(S.time*3.2)*0.035};
+    case 'hand': return {...base, crouch:0.4, lean:0.5, arms:1, scale:1.18, dy:0.08};
+    case 'press': return {...base, crouch:0.5, lean:0.62, arms:0.85, reach:0.15, scale:1.3, dy:0.14};
+    case 'tell': { const k = ease(o.t/Math.max(o.dur, 0.01)); return {...base, crouch:0.45 + 0.36*k, lean:0.38 + 0.25*k, scale:1 + 0.04*k}; }
+    case 'dip': { const k = Math.sin(clamp(o.t/o.dur, 0, 1)*Math.PI); return {...base, crouch:0.45 + 0.36*k, lean:0.38 + 0.2*k}; }
+    case 'shoot': { const k = ease(o.t/Math.max(o.dur, 0.01)); return {crouch:1, lean:0.95, arms:0, reach:0.7, head:0.2, scale:1 + 0.85*k, dy:0.55*k}; }
+    case 'opening': return {...base, crouch:0.1, lean:0.1, arms:0.3, reach:1};
+    case 'stuffed': return {crouch:1, lean:1.32, arms:0, reach:0.4, head:0.6, scale:1.35, dy:0.28};
+    case 'snapped': return {crouch:0.85, lean:1.05, arms:0.2, reach:0, head:1, scale:1.2, dy:0.12};
+    default: return base;
+  }
+}
+function line(a, b, w, c){ ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); }
+function poly(pts, c){ ctx.fillStyle = c; ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); ctx.fill(); }
+
+function drawWrestler(x, footY, u, p, glow, alpha){
+  ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = u*0.22; }
+  const L = Math.min(p.lean, 1.42);
+  const hipH = u*(0.95 - 0.45*p.crouch), spread = u*(0.24 + 0.12*p.crouch);
+  const hipY = footY - hipH;
+  const torso = u*0.56*Math.cos(L) + u*0.05;
+  const shY = hipY - torso + p.head*u*0.06, shW = u*0.23;
+  const headR = u*0.105*(1 + 0.15*Math.sin(L));
+  const headY = shY - headR*(0.25 + 1.1*Math.cos(L)) + p.head*u*0.1;
+  const limb = u*0.1;
+  for (const s of [-1, 1]) {
+    const foot = [x + s*spread, footY], knee = [x + s*spread*1.2, footY - hipH*0.52], hj = [x + s*u*0.1, hipY];
+    line(hj, knee, limb, COL['skin-opp']); line(knee, foot, limb*0.9, COL['skin-opp']);
+    line(hj, [lerp(hj[0], knee[0], 0.45), lerp(hj[1], knee[1], 0.45)], limb*1.12, COL.red);
+    ctx.fillStyle = COL.gear; ctx.beginPath(); ctx.ellipse(foot[0] + s*u*0.02, footY + u*0.01, u*0.075, u*0.035, 0, 0, Math.PI*2); ctx.fill();
+  }
+  poly([[x - shW, shY], [x + shW, shY], [x + u*0.16, hipY + u*0.03], [x - u*0.16, hipY + u*0.03]], COL.red);
+  ctx.fillStyle = COL['skin-opp']; ctx.fillRect(x - u*0.04, headY + headR*0.6, u*0.08, Math.max(0, shY - headY - headR*0.5));
+  ctx.beginPath(); ctx.arc(x, headY, headR, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = COL.gear;
+  for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(x + s*headR*0.95, headY + headR*0.1, headR*0.36, headR*0.5, 0, 0, Math.PI*2); ctx.fill(); }
+  ctx.strokeStyle = COL.gear; ctx.lineWidth = Math.max(2, headR*0.18);
+  ctx.beginPath(); ctx.arc(x, headY, headR*1.02, Math.PI*1.12, Math.PI*1.88); ctx.stroke();
+  for (const s of [-1, 1]) {
+    const sh = [x + s*shW, shY + u*0.03];
+    const hb = [x + s*u*0.12, shY + u*0.17], hu = [x + s*u*0.2, shY - u*0.07], hr = [x + s*u*0.38, shY + u*0.05];
+    let hand = [lerp(hb[0], hu[0], p.arms), lerp(hb[1], hu[1], p.arms)];
+    hand = [lerp(hand[0], hr[0], p.reach), lerp(hand[1], hr[1], p.reach)];
+    const elbow = [x + s*shW*(0.92 + 0.3*p.reach), lerp(shY + u*0.2, shY + u*0.04, Math.max(p.arms, p.reach))];
+    line(sh, elbow, limb*0.85, COL['skin-opp']); line(elbow, hand, limb*0.8, COL['skin-opp']);
+  }
+  ctx.restore();
+}
+
+function drawYou(){
+  let off = (S.level - 0.45)*H*0.28, fx = 0.17, fy = 0.88, sc = 1;
+  const a = S.action;
+  if (a) {
+    const k = clamp((S.time - a.t0)/a.dur, 0, 1), b = Math.sin(k*Math.PI);
+    if (a.type === 'sprawl') off += b*H*0.28;
+    else if (a.type === 'shot') { fx -= 0.1*b; fy -= 0.16*b; sc += 0.5*b; }
+    else if (a.type === 'snap') off -= Math.sin(k*Math.PI*2)*H*0.1;
+  }
+  ctx.save(); ctx.lineCap = 'round';
+  for (const s of [-1, 1]) {
+    const hand = [W/2 + s*W*fx, H*fy + off], elbow = [W/2 + s*W*0.5, H*1.08 + off*0.4];
+    const w = Math.min(W, H*1.2)*0.075*sc;
+    line(elbow, hand, w, COL['skin-you']);
+    ctx.fillStyle = COL['skin-you']; ctx.beginPath(); ctx.arc(hand[0], hand[1], w*0.62, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function roundRect(x, y, w, h, r){ ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+const FD = (wgt, px) => `${wgt} ${px}px "Barlow Condensed", "Arial Narrow", sans-serif`;
+const FB = (wgt, px) => `${wgt} ${px}px "Barlow", system-ui, sans-serif`;
+
+function draw(){
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const rd = S.plan[S.r], live = rd.phase === 'live';
+  const shift = (S.level - 0.45)*H*0.10;
+  const hor = H*0.27;
+  ctx.fillStyle = COL.wall; ctx.fillRect(0, 0, W, hor + 2);
+  const pw = W/7, px0 = -((S.youX*W*0.12) % pw) - pw;
+  for (let i = 0; i < 10; i++) { if (i % 2) { ctx.fillStyle = COL['wall-pad']; ctx.fillRect(px0 + i*pw, hor*0.35, pw - 2, hor*0.65); } }
+  const g = ctx.createLinearGradient(0, hor, 0, H); g.addColorStop(0, COL['mat-deep']); g.addColorStop(1, COL.mat);
+  ctx.fillStyle = g; ctx.fillRect(0, hor, W, H - hor);
+  const cx = W/2 - S.youX*W*0.24, cy = hor + (H - hor)*0.5 + shift;
+  const rx = W*0.82, ry = (H - hor)*0.5;
+  ctx.fillStyle = COL.zone; ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = COL.mat; ctx.beginPath(); ctx.ellipse(cx, cy, rx*0.88, ry*0.88, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = COL.line; ctx.globalAlpha = 0.75; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(cx, cy, rx*0.12, ry*0.12, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 4; ctx.lineCap = 'butt';
+  line([cx - rx*0.05, cy - ry*0.02], [cx - rx*0.05, cy + ry*0.02], 4, COL.red);
+  line([cx + rx*0.05, cy - ry*0.02], [cx + rx*0.05, cy + ry*0.02], 4, COL.blue);
+
+  const o = S.opp, tp = poseTarget(o), prate = (o.state === 'shoot' || o.state === 'stuffed') ? 18 : 9;
+  for (const k in S.pose) S.pose[k] += (tp[k] - S.pose[k])*Math.min(1, S._dt*prate);
+  const p = S.pose;
+  const u = Math.min(H*0.34, W*0.52)*p.scale;
+  const ox = W/2 + (o.x - S.youX)*W*0.38, fy = cy + (H - hor)*0.12 + p.dy*u*0.6;
+  let glow = null;
+  if (live && S.mode === 'work') {
+    if (o.state === 'tell' || o.state === 'shoot') {
+      const pulse = 0.35 + 0.3*Math.sin(S.time*28);
+      ctx.save(); ctx.globalAlpha = pulse; ctx.fillStyle = COL.red; ctx.beginPath(); ctx.ellipse(ox, fy, u*0.55, u*0.11, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
+      glow = COL.red;
+    } else if (o.state === 'opening') glow = COL.green;
+    else if (o.state === 'hand') glow = COL.amber;
+    else if (o.state === 'press') glow = COL.zone;
+  } else if (!live && S.cue) {
+    glow = {sprawl:COL.red, shot:COL.green, snap:COL.amber}[S.cue.seq[S.cue.step]] || null;
+  }
+  ctx.save(); ctx.globalAlpha = 0.35; ctx.fillStyle = COL.bg; ctx.beginPath(); ctx.ellipse(ox, fy + u*0.02, u*0.42, u*0.07, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
+  drawWrestler(ox, fy, u, p, glow, live ? 1 : 0.9);
+
+  if (S.mode === 'work' && S.cue) {
+    const need = S.cue.seq[S.cue.step];
+    if (need === 'left' || need === 'right' || need === 'move') {
+      const dirs = need === 'move' ? [-1, 1] : [need === 'left' ? -1 : 1];
+      ctx.save(); ctx.strokeStyle = COL.ink; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (const d of dirs) for (let i = 0; i < 3; i++) {
+        const ax = W/2 + d*(W*0.14 + i*W*0.06) + d*Math.sin(S.time*8)*4, ay = H*0.66, s = Math.min(W, H)*0.04;
+        ctx.globalAlpha = (0.4 + i*0.25)*(need === 'move' ? 0.7 : 1);
+        ctx.beginPath(); ctx.moveTo(ax - d*s, ay - s); ctx.lineTo(ax, ay); ctx.lineTo(ax - d*s, ay + s); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+  drawYou();
+
+  // edge glow on the side you're drifting toward
+  const ax = Math.abs(S.youX);
+  if (ax > 0.6) {
+    const side = Math.sign(S.youX), gw = W*0.28;
+    const eg = ctx.createLinearGradient(side > 0 ? W : 0, 0, side > 0 ? W - gw : gw, 0);
+    eg.addColorStop(0, COL.zone); eg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save(); ctx.globalAlpha = clamp((ax - 0.6)*1.8, 0, 0.75); ctx.fillStyle = eg;
+    ctx.fillRect(side > 0 ? W - gw : 0, 0, gw, H); ctx.restore();
+  }
+
+  // your floor: wall to wall, orange ends are the mat edge
+  {
+    const fw = Math.min(240, W*0.56), fx0 = (W - fw)/2, fy0 = H - 22;
+    ctx.fillStyle = COL.shade; roundRect(fx0 - 10, fy0 - 18, fw + 20, 32, 10); ctx.fill();
+    ctx.fillStyle = COL.panel; ctx.fillRect(fx0, fy0, fw, 6);
+    ctx.fillStyle = COL.zone; ctx.fillRect(fx0, fy0, fw*0.07, 6); ctx.fillRect(fx0 + fw*0.93, fy0, fw*0.07, 6);
+    ctx.fillStyle = COL.muted; ctx.fillRect(fx0 + fw/2 - 1, fy0 - 3, 2, 12);
+    const dx = fx0 + fw*(S.youX + 1)/2;
+    ctx.fillStyle = ax > 0.85 ? COL.zone : COL.ink; ctx.beginPath(); ctx.arc(dx, fy0 + 3, 6, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = COL.muted; ctx.font = FB(500, 9); ctx.textAlign = 'left'; ctx.fillText('Your floor', fx0, fy0 - 6);
+    ctx.textAlign = 'right'; ctx.fillText('wall to wall', fx0 + fw, fy0 - 6);
+  }
+
+  // level meter
+  const mx = 10, my = H*0.2, mh = H*0.58, mw = 12;
+  ctx.fillStyle = COL.shade; roundRect(mx - 3, my - 22, mw + 6, mh + 30, 8); ctx.fill();
+  ctx.fillStyle = COL.panel; ctx.fillRect(mx, my, mw, mh);
+  const yOf = lv => my + (1 - lv)*mh;
+  ctx.fillStyle = COL.green; ctx.globalAlpha = 0.45; ctx.fillRect(mx, yOf(BAND.hi), mw, yOf(BAND.lo) - yOf(BAND.hi)); ctx.globalAlpha = 1;
+  const inB = S.level >= BAND.lo && S.level <= BAND.hi;
+  ctx.fillStyle = inB ? COL.green : (S.level > BAND.hi ? COL.amber : COL.ink);
+  ctx.fillRect(mx - 3, yOf(S.level) - 2, mw + 6, 4);
+  ctx.fillStyle = COL.muted; ctx.font = FB(500, 10); ctx.textAlign = 'center'; ctx.fillText('Level', mx + mw/2, my - 8);
+
+  // live score + position
+  if (live) {
+    const bw = 132, bx = W - bw - 10, by = 10;
+    ctx.fillStyle = COL.shade; roundRect(bx, by, bw, 56, 10); ctx.fill();
+    ctx.textAlign = 'left'; ctx.font = FD(700, 26);
+    ctx.fillStyle = COL.blue; ctx.fillText('You ' + S.score.you, bx + 10, by + 28);
+    ctx.textAlign = 'right'; ctx.fillStyle = COL.red; ctx.fillText(S.score.opp + ' Opp', bx + bw - 10, by + 28);
+    ctx.fillStyle = COL.panel; ctx.fillRect(bx + 10, by + 40, bw - 20, 6);
+    ctx.fillStyle = S.bandEMA < 0.6 ? COL.amber : COL.green; ctx.fillRect(bx + 10, by + 40, (bw - 20)*clamp(S.bandEMA, 0, 1), 6);
+    ctx.fillStyle = COL.muted; ctx.font = FB(500, 9); ctx.textAlign = 'left'; ctx.fillText('position', bx + 10, by + 54);
+  }
+
+  // coach line
+  if (S.coachLine && S.time - S.coachLine.t < 2.8) {
+    const t = S.coachLine.text; ctx.font = FB(600, 14);
+    const tw = ctx.measureText(t).width + 28, tx = live ? Math.max(40, (W - 142 - tw)/2 + 14) : (W - tw)/2;
+    ctx.fillStyle = COL.amber; roundRect(tx, 12, tw, 30, 15); ctx.fill();
+    ctx.fillStyle = COL.bg; ctx.textAlign = 'left'; ctx.fillText(t, tx + 14, 32);
+  }
+
+  // callout
+  const c = S.callout;
+  if (c && S.mode === 'work') {
+    const age = S.time - c.t, life = c.kind === 'cue' ? 1.4 : 1.15;
+    if (age < life) {
+      const a = age < 0.08 ? age/0.08 : 1 - Math.max(0, age - life*0.6)/(life*0.4);
+      const col = {cue:COL.ink, good:COL.green, bad:COL.red, miss:COL.amber, info:COL.ink}[c.kind];
+      ctx.save(); ctx.globalAlpha = clamp(a, 0, 1); ctx.textAlign = 'center';
+      const size = clamp(W*0.11, 30, 64) * (age < 0.12 ? 1 + (0.12 - age)*1.5 : 1);
+      ctx.font = FD(700, size); ctx.lineWidth = 6; ctx.strokeStyle = COL.shade; ctx.lineJoin = 'round';
+      ctx.strokeText(c.text, W/2, H*0.42); ctx.fillStyle = col; ctx.fillText(c.text, W/2, H*0.42);
+      if (c.sub) { ctx.font = FB(600, 14); ctx.strokeText(c.sub, W/2, H*0.42 + 24); ctx.fillStyle = COL.ink; ctx.fillText(c.sub, W/2, H*0.42 + 24); }
+      ctx.restore();
+    }
+  }
+
+  if (S.mode === 'rest' || S.paused) {
+    ctx.fillStyle = COL.shade; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.fillStyle = COL.ink;
+    if (S.paused) { ctx.font = FD(700, 44); ctx.fillText('Paused', W/2, H*0.45); }
+    else {
+      const next = S.plan[S.r + 1];
+      ctx.font = FD(700, 44); ctx.fillText('Reset ' + fmtClock(S.clock), W/2, H*0.36);
+      ctx.font = FB(500, 15); ctx.fillStyle = COL.ink; ctx.fillText(S.restNote, W/2, H*0.36 + 30);
+      if (next) { ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Next: ' + roundTitle(next) + ' · ' + roundBlurb(next), W/2, H*0.36 + 54); }
+    }
+  }
+}
+
+function updateTopBar(){
+  const rd = S.plan[S.r];
+  const name = roundTitle(rd), sub = `Round ${S.r + 1} of ${S.plan.length} · explosive ${S.explosive}/${S.cap}` + (S.auto ? ' · auto-play' : '');
+  if ($('phaseName').textContent !== name) $('phaseName').textContent = name;
+  if ($('roundNo').textContent !== sub) $('roundNo').textContent = sub;
+  const t = fmtClock(S.clock); if ($('timer').textContent !== t) $('timer').textContent = t;
+  $('timer').classList.toggle('rest', S.mode === 'rest');
+  if (S.auto) {
+    const d = $('padDot'), r = pad.getBoundingClientRect();
+    d.hidden = S.mode !== 'work';
+    d.style.left = (r.width*(0.5 + S.vx*0.25)) + 'px'; d.style.top = (r.height*clamp((1 - S.padTarget)/0.95, 0, 1)) + 'px';
+  }
+}
+
+/* ---------- debrief ---------- */
+const mean = a => a.length ? a.reduce((x, y) => x + y, 0)/a.length : null;
+function buildDebrief(){
+  const rs = S.rounds;
+  const work = rs.reduce((a, r) => a + r.work, 0), band = rs.reduce((a, r) => a + r.inBand, 0);
+  const pct = Math.round(100*band/Math.max(work, 0.01));
+  const reac = mean(rs.flatMap(r => r.reactions)), rec = mean(rs.flatMap(r => r.recoveries));
+  const per = rs.map(r => Math.round(100*r.inBand/Math.max(r.work, 0.01)));
+  const half = Math.floor(per.length/2);
+  const early = Math.round(mean(per.slice(0, half)) || 0), late = Math.round(mean(per.slice(half)) || 0);
+  let note;
+  if (early - late >= 8) note = `Stance held at ${early}% in the first half and ${late}% in the second. That drop is the fatigue line to move next session.`;
+  else if (late - early >= 8) note = `Stance got better as the session went, ${early}% early and ${late}% late. Warm-in may need to run longer.`;
+  else note = `Stance held steady across the session, about ${pct}% throughout.`;
+  const hits = rs.reduce((a, r) => a + r.hits, 0), misses = rs.reduce((a, r) => a + r.misses, 0);
+  const goes = S.goes.map((gg, i) => `<div><span>Live go${S.goes.length > 1 ? ' ' + (i + 1) : ''}</span><span>You ${gg.you} · ${gg.opp} Opp</span></div>`).join('');
+  $('debriefIn').innerHTML = `
+    <div><h2>Debrief</h2><div class="sub">${S.len}-minute plan · ${S.auto ? 'auto-play' : 'touch'} · ${settings.quick ? 'quick look' : 'full length'}</div></div>
+    <div class="big3">
+      <div><b>${pct}%</b><span>time in stance</span></div>
+      <div><b>${reac === null ? '–' : Math.round(reac*1000)}</b><span>reaction, ms</span></div>
+      <div><b>${rec === null ? '–' : rec.toFixed(1)}</b><span>recovery, s</span></div>
+    </div>
+    <div class="card"><h3>In stance by round</h3>
+      <div class="bars">${per.map((v, i) => `<div><span>${v}</span><i style="height:${Math.max(4, v)}%;--c:var(--${PHASE[rs[i].phase].c})"></i></div>`).join('')}</div>
+      <div class="note">${note}</div>
+    </div>
+    <div class="card"><h3>Session</h3><div class="rows">
+      <div><span>Drill calls on time</span><span>${hits} of ${hits + misses}</span></div>
+      ${goes}
+      <div><span>Explosive reps</span><span>${S.explosive} of ${S.cap} cap</span></div>
+    </div></div>
+    <div class="actions"><button class="primary" id="againBtn">Run it again</button><button class="secondary" id="menuBtn">Change session</button></div>`;
+  $('debrief').hidden = false; $('debrief').scrollTop = 0;
+  $('againBtn').onclick = () => startSession(S.auto);
+  $('menuBtn').onclick = quit;
+  say(`Session done. In stance ${pct} percent.${reac === null ? '' : ' Reaction ' + Math.round(reac*1000) + ' milliseconds.'}`, true);
+}
+
+/* ---------- loop ---------- */
+let lastTs = 0;
+function frame(ts){
+  const now = ts/1000, dt = Math.min(0.05, lastTs ? now - lastTs : 0.016); lastTs = now;
+  if (S && !$('game').hidden) {
+    S._dt = S.paused ? 0 : dt;
+    if (S.mode !== 'done' && !S.paused) update(dt);
+    if (S.mode !== 'done') { draw(); updateTopBar(); }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+document.addEventListener('visibilitychange', () => { if (document.hidden && S && S.mode !== 'done') S.paused = true; });
+})();
+</script>
+</body>
+</html>
