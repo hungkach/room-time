@@ -205,6 +205,184 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 
 <section id="debrief" hidden><div class="in" id="debriefIn"></div></section>
 
+<script id="rt-metrics">
+// Room Time metrics: pure functions over MediaPipe landmark lists, no DOM.
+// A landmark list is 33 points, each {x, y, z, visibility} or [x, y, z, visibility].
+// Image landmarks are 0 to 1 of the raw (unmirrored) frame; world landmarks are meters
+// from the hip midpoint. y grows down in both. Node tests run this block (test/helpers/load.mjs).
+(function (g) {
+  'use strict';
+  const RT = g.RoomTime = g.RoomTime || {};
+
+  RT.BAND = {lo:0.32, hi:0.58};   // the prototype's stance band, in level units (1 = standing tall)
+  RT.STANCE_LEVEL = 0.45;         // where the calibrated square stance sits on the level scale
+  RT.POSES = ['stand', 'square', 'stagger', 'wallL', 'wallR'];
+  const KEY = [0, 11, 12, 23, 24, 25, 26, 27, 28]; // nose, shoulders, hips, knees, ankles: must be in frame
+
+  const P = p => Array.isArray(p) ? {x:p[0], y:p[1], z:p[2], v:p[3] == null ? 1 : p[3]} : {x:p.x, y:p.y, z:p.z, v:p.visibility == null ? 1 : p.visibility};
+  const mid = (a, b) => ({x:(a.x + b.x)/2, y:(a.y + b.y)/2});
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const r4 = v => Math.round(v*1e4)/1e4;
+  const num = v => typeof v === 'number' && isFinite(v);
+  RT.pt = P;
+  RT.pack = list => list ? list.map(p => { const q = P(p); return [r4(q.x), r4(q.y), r4(q.z), r4(q.v)]; }) : null;
+
+  // One space with x scaled by sx so x and y share units (image: the frame's aspect, world: 1).
+  // dir is +1 when the player's right shows at larger x, so mirroring never flips left and right.
+  function space(list, sx){
+    const q = i => { const p = P(list[i]); return {x:p.x*sx, y:p.y}; };
+    const lS = q(11), rS = q(12), lE = q(13), rE = q(14), lH = q(23), rH = q(24), lA = q(27), rA = q(28);
+    const sM = mid(lS, rS), hM = mid(lH, rH), aM = mid(lA, rA);
+    const dir = Math.sign(rS.x - lS.x) || 1;
+    return {
+      S: dist(lS, rS),                 // shoulder width
+      T: dist(sM, hM),                 // torso length
+      hipH: aM.y - hM.y,               // hip midpoint above the ankle midpoint
+      footW: Math.abs(rA.x - lA.x),    // ankle to ankle, across
+      elbowL: (sM.x - lE.x)*dir,       // each elbow out from the shoulder midpoint
+      elbowR: (rE.x - sM.x)*dir,
+      dir
+    };
+  }
+
+  // Raw measures for one frame. lm: image landmarks, wl: world landmarks or null, aspect: width / height.
+  RT.measure = function(lm, wl, aspect){
+    if (!lm) return null;
+    const vis = Math.min(...KEY.map(i => P(lm[i]).v));
+    return {img:space(lm, aspect), world:wl ? space(wl, 1) : null, hipX:mid(P(lm[23]), P(lm[24])).x, vis};
+  };
+
+  // Hip height against standing, three ways, so Phase 0 can show which one holds up:
+  // img is raw image height (moves if you step closer), imgS is scaled by this frame's shoulder width,
+  // world is from MediaPipe's metric world landmarks.
+  RT.hipRatios = function(m, stand){
+    return {
+      img: m.img.hipH/stand.img.hipH,
+      imgS: (m.img.hipH/m.img.S)/(stand.img.hipH/stand.img.S),
+      world: m.world && stand.world ? m.world.hipH/stand.world.hipH : null
+    };
+  };
+
+  // Level on the prototype's scale: 1 at standing, STANCE_LEVEL at the calibrated square stance, linear between.
+  RT.levelFromRatio = function(ratio, squareRatio){
+    if (!num(ratio) || !num(squareRatio) || squareRatio > 0.97) return null;
+    return 1 - (1 - ratio)*(1 - RT.STANCE_LEVEL)/(1 - squareRatio);
+  };
+  RT.stanceZone = function(level){
+    if (!num(level)) return null;
+    if (level > RT.BAND.hi) return 'tall';
+    if (level < RT.BAND.lo) return 'deep';
+    return 'stance';
+  };
+
+  // Floor position from the hip's image x: -1 at the left wall capture, +1 at the right.
+  RT.floorX = function(hipX, cal){
+    if (!cal || !cal.wallL || !cal.wallR) return null;
+    const a = cal.wallL.hipX, b = cal.wallR.hipX;
+    if (Math.abs(b - a) < 0.05) return null;
+    return Math.max(-1.5, Math.min(1.5, -1 + 2*(hipX - a)/(b - a)));
+  };
+
+  // Live readouts against a calibration. src picks the hip height source: 'world', 'imgS' or 'img'.
+  RT.readouts = function(m, cal, src){
+    if (!m) return null;
+    const out = {
+      footS: m.img.footW/m.img.S,                                   // foot width in shoulder widths (this frame)
+      footWorld: m.world ? m.world.footW/m.world.S : null,
+      elbowL: m.img.elbowL/(m.img.S/2),                             // 1.0 = elbow on the shoulder line, under 1 is in
+      elbowR: m.img.elbowR/(m.img.S/2),
+      elbowLWorld: m.world ? m.world.elbowL/(m.world.S/2) : null,
+      elbowRWorld: m.world ? m.world.elbowR/(m.world.S/2) : null,
+      ratios: null, level: null, zone: null, floorX: null
+    };
+    if (!cal || !cal.stand) return out;
+    out.ratios = RT.hipRatios(m, cal.stand);
+    src = src || 'world';
+    if (out.ratios[src] == null) src = 'imgS';
+    out.src = src;
+    if (cal.square) out.level = RT.levelFromRatio(out.ratios[src], cal.square.ratios[src]);
+    out.zone = RT.stanceZone(out.level);
+    out.floorX = RT.floorX(m.hipX, cal);
+    return out;
+  };
+
+  RT.median = function(a){
+    const s = a.filter(num).sort((x, y) => x - y);
+    if (!s.length) return null;
+    const k = s.length >> 1;
+    return s.length % 2 ? s[k] : (s[k - 1] + s[k])/2;
+  };
+  // Median of every numeric field across a list of same-shaped objects.
+  RT.medianTree = function(list){
+    list = list.filter(Boolean);
+    if (!list.length) return null;
+    const out = {};
+    for (const k of Object.keys(list[0])) {
+      const v = list[0][k];
+      if (typeof v === 'number') out[k] = RT.median(list.map(o => o[k]));
+      else if (v && typeof v === 'object') out[k] = RT.medianTree(list.map(o => o[k]));
+      else out[k] = v;
+    }
+    return out;
+  };
+
+  // Calibration from the captured measures of each pose: {stand: [m...], square: [...], ...}.
+  RT.buildCal = function(caps, meta){
+    const cal = Object.assign({v:1, at:null}, meta || {});
+    for (const pose of RT.POSES) if (caps[pose] && caps[pose].length) cal[pose] = RT.medianTree(caps[pose]);
+    if (!cal.stand) return cal;
+    for (const pose of ['square', 'stagger']) {
+      const c = cal[pose]; if (!c) continue;
+      c.ratios = RT.hipRatios(c, cal.stand);
+      c.footS = c.img.footW/c.img.S;
+      c.footWorld = c.world ? c.world.footW/c.world.S : null;
+    }
+    return cal;
+  };
+
+  // Is the whole body in the picture? Hints never say left or right (the preview is mirrored).
+  RT.frameCheck = function(lm, margin, minVis){
+    margin = margin == null ? 0.02 : margin; minVis = minVis == null ? 0.5 : minVis;
+    if (!lm) return {ok:false, hint:'Step into view'};
+    const pts = KEY.map(i => P(lm[i]));
+    const seen = pts.filter(p => p.v >= minVis).length;
+    if (seen < 4) return {ok:false, hint:'Step into view'};
+    const top = Math.min(...pts.map(p => p.y)), bot = Math.max(...pts.map(p => p.y));
+    if (top < margin || bot > 1 - margin || pts.slice(7).some(p => p.v < minVis)) return {ok:false, hint:'Step back'};
+    if (pts.some(p => p.x < margin || p.x > 1 - margin)) return {ok:false, hint:'Move to the middle'};
+    if (seen < KEY.length) return {ok:false, hint:'Face the camera'};
+    if (bot - top < 0.4) return {ok:false, hint:'Step closer'};
+    return {ok:true, hint:''};
+  };
+
+  // Timestamps for detectForVideo must strictly increase.
+  RT.nextTs = (last, now) => now > last ? now : last + 1;
+
+  RT.percentile = function(a, p){
+    const s = a.filter(num).sort((x, y) => x - y);
+    if (!s.length) return null;
+    return s[Math.min(s.length - 1, Math.max(0, Math.round(p*(s.length - 1))))];
+  };
+
+  // Thermal soak verdict from samples [{t: seconds, fps, inferMs}].
+  RT.soakVerdict = function(samples, minFps){
+    minFps = minFps || 24;
+    if (!samples.length) return null;
+    const end = samples[samples.length - 1].t;
+    const avg = a => a.length ? a.reduce((x, y) => x + y, 0)/a.length : null;
+    const first = avg(samples.filter(s => s.t <= 60).map(s => s.fps));
+    const last = avg(samples.filter(s => s.t >= end - 60).map(s => s.fps));
+    const ratio = first ? last/first : null;
+    return {first, last, ratio, minutes:end/60, pass: ratio != null && ratio >= 0.85 && last >= minFps};
+  };
+
+  // Mode of the model bench: keep inference on the main thread when it fits a 30 fps frame.
+  RT.benchVerdict = function(r){
+    if (!r) return null;
+    return r.p95 < 33 && r.detectFps >= 24 ? 'main thread is fine' : 'needs a worker';
+  };
+})(globalThis);
+</script>
 <script>
 (() => {
 const $ = id => document.getElementById(id);
