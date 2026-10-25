@@ -262,6 +262,10 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
           <button id="labStop" disabled>Stop</button>
         </div>
         <select class="lsel" id="labCam" hidden aria-label="Camera"></select>
+        <div class="lcard"><h3>Model bench</h3><div id="benchOut"></div>
+          <div class="lbtns"><button id="benchBtn">Bench models</button><button id="benchSave" hidden>Save</button></div></div>
+        <div class="lcard"><h3>Thermal soak</h3><div id="soakOut"></div><canvas id="soakChart" style="width:100%;height:60px"></canvas>
+          <div class="lbtns"><button id="soakBtn">Thermal soak</button><button id="soakSave" hidden>Save</button></div></div>
       </div>
     </div>
   </section>
@@ -1302,7 +1306,8 @@ const video = $('labVideo'), skel = $('labSkel'), sctx = skel.getContext('2d');
 const L = {
   vision:null, fileset:null, lmk:null, model:null, delegate:null, loading:false,
   stream:null, cam:null, src:null, mirror:false, raf:0, lastTs:0, lastVT:-1,
-  det:[], camT:[], rafT:[], cur:null, debug:true, wake:null, on:new Set()
+  det:[], camT:[], rafT:[], cur:null, debug:true, wake:null, on:new Set(),
+  camCount:0, gapMax:0, prevRaf:0   // running counters the bench and soak read and reset
 };
 try { L.model = localStorage.getItem('roomtime.model') || 'full'; } catch(e) { L.model = 'full'; }
 const want = { model: L.model };
@@ -1402,7 +1407,7 @@ async function startCamera(deviceId){
 function begin(){
   $('labView').classList.toggle('mirror', L.mirror);
   $('labStop').disabled = false; $('labStart').textContent = 'Restart camera';
-  L.lastVT = -1; L.det = []; L.camT = []; L.rafT = [];
+  L.lastVT = -1; L.det = []; L.camT = []; L.rafT = []; L.prevRaf = 0;
   fitView(); lockScreen(); watchFrames();
   cancelAnimationFrame(L.raf); L.raf = requestAnimationFrame(tick);
   status(statusLine());
@@ -1434,7 +1439,7 @@ function statusLine(){
 // counts real camera frames where the browser can (requestVideoFrameCallback)
 function watchFrames(){
   if (!video.requestVideoFrameCallback) return;
-  const cb = () => { if (!L.src) return; pushWin(L.camT, now()); video.requestVideoFrameCallback(cb); };
+  const cb = () => { if (!L.src) return; L.camCount++; pushWin(L.camT, now()); video.requestVideoFrameCallback(cb); };
   video.requestVideoFrameCallback(cb);
 }
 
@@ -1451,6 +1456,8 @@ function tick(){
   L.raf = requestAnimationFrame(tick);
   const t = now();
   pushWin(L.rafT, t);
+  if (L.prevRaf) L.gapMax = Math.max(L.gapMax, t - L.prevRaf);
+  L.prevRaf = t;
   if (L.lmk && !L.loading && video.readyState >= 2 && video.currentTime !== L.lastVT) {
     L.lastVT = video.currentTime;
     const ts = RT.nextTs(L.lastTs, t); L.lastTs = ts;
@@ -1547,6 +1554,155 @@ $('labModel').addEventListener('click', e => { const b = e.target.closest('butto
 
 // shared with the Phase 0 tools below
 globalThis.RoomTimeLab = {L, RT, $, video, status, statusLine, say, beep, stats, loadModel, switchModel, startCamera, stopSource, begin, fitView, want, unlockAudio, lockScreen};
+})();
+</script>
+<script id="rt-lab-tools">
+// Camera check tools: model bench, thermal soak, calibration, live readouts, recording.
+(() => {
+const {L, RT, $, video, status, statusLine, say, beep, stats, loadModel, want} = globalThis.RoomTimeLab;
+const now = () => performance.now();
+const n = (v, d = 0) => v == null || !isFinite(v) ? '-' : (+v).toFixed(d);
+const store = {
+  get(k){ try { return JSON.parse(localStorage.getItem('roomtime.' + k) || 'null'); } catch(e) { return null; } },
+  set(k, v){ try { localStorage.setItem('roomtime.' + k, JSON.stringify(v)); } catch(e) {} }
+};
+let busy = null; // the one tool running: 'bench' | 'soak' | 'cal' | 'record'
+const cancelled = {};
+// waits ms, in short steps so a tool can be stopped; resolves false if it was
+async function wait(ms, tool){
+  const end = now() + ms;
+  while (now() < end) { if (cancelled[tool] || !L.src) return false; await new Promise(r => setTimeout(r, Math.min(250, end - now()))); }
+  return !cancelled[tool] && !!L.src;
+}
+function claim(tool){
+  if (!L.src) { status('Start the camera first'); return false; }
+  if (busy && busy !== tool) { status('Finish the ' + busy + ' first'); return false; }
+  busy = tool; cancelled[tool] = false; return true;
+}
+function release(tool){ if (busy === tool) busy = null; }
+
+// Save a file: the share sheet where there is one (iPad: Save to Files or Photos), else a download.
+// Call it straight from a tap so iOS allows the share sheet.
+async function saveFile(name, blob){
+  try {
+    const file = new File([blob], name, {type:blob.type});
+    if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file]}); return; }
+  } catch(e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+const jsonBlob = o => new Blob([JSON.stringify(o)], {type:'application/json'});
+const stamp = () => new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+const device = () => ({userAgent:navigator.userAgent, camera:L.cam, screen:[screen.width, screen.height, devicePixelRatio]});
+
+/* ---------- model bench ---------- */
+// Each model in turn: load, 3 s to settle, then 30 s measured while the player holds and moves in stance.
+// ?fast in the URL shortens the bench and the soak for headless checks
+const FAST = /[?&]fast\b/.test(location.search);
+const BENCH_MS = FAST ? 3000 : 30000, SETTLE_MS = FAST ? 500 : 3000;
+function renderBench(rows, note){
+  const best = rows.find(r => r.model === 'full');
+  const v = best ? RT.benchVerdict(best) : null;
+  $('benchOut').innerHTML = rows.length ? `<div class="rows">` + rows.map(r =>
+    `<div><span>${r.model} ${r.delegate}</span><span>${n(r.detectFps)} fps · ${n(r.p50, 0)}/${n(r.p95, 0)} ms · body ${n(r.body*100)}%</span></div>`).join('') + `</div>` +
+    (v ? `<div class="verdict ${v === 'main thread is fine' ? 'ok' : 'bad'}">Full: ${v}</div>` : '') +
+    (note ? `<div>${note}</div>` : '') : (note || 'Lite, full and heavy, 30 s each. Stand in stance and move a little.');
+}
+async function bench(){
+  if (busy === 'bench') { cancelled.bench = true; return; }
+  if (!claim('bench')) return;
+  const btn = $('benchBtn'); btn.textContent = 'Stop bench'; btn.classList.add('on');
+  const rows = [];
+  try {
+    for (const model of ['lite', 'full', 'heavy']) {
+      status('Bench: loading ' + model);
+      await loadModel(model);
+      say(model + '. Stance and move.');
+      if (!await wait(SETTLE_MS, 'bench')) break;
+      const inf = []; let det = 0, body = 0;
+      const fn = f => { inf.push(f.inf); det++; if (f.lm) body++; };
+      L.on.add(fn); L.gapMax = 0; const cam0 = L.camCount, t0 = now();
+      const left = setInterval(() => status(`Bench: ${model} ${Math.ceil((BENCH_MS - (now() - t0))/1000)} s`), 500);
+      const ok = await wait(BENCH_MS, 'bench');
+      clearInterval(left); L.on.delete(fn);
+      if (!ok) break;
+      const sec = (now() - t0)/1000;
+      rows.push({model, delegate:L.delegate, detectFps:det/sec, camFps:L.camCount > cam0 ? (L.camCount - cam0)/sec : null,
+        p50:RT.percentile(inf, 0.5), p95:RT.percentile(inf, 0.95), gap:L.gapMax, body:det ? body/det : 0});
+      renderBench(rows);
+    }
+  } catch(e) { status('Bench error: ' + e.message); }
+  const done = rows.length === 3;
+  if (done) { store.set('bench', {at:new Date().toISOString(), rows, device:device()}); $('benchSave').hidden = false; say('Bench done.'); beep(880, 0.15); }
+  renderBench(rows, done ? '' : 'Bench stopped.');
+  await loadModel(want.model).catch(() => {});
+  btn.textContent = 'Bench models'; btn.classList.remove('on');
+  release('bench'); status(statusLine());
+}
+
+/* ---------- thermal soak ---------- */
+// The chosen model for 15 minutes; a sample every 10 s. iOS has no thermal reading, so throttling shows as fps falling.
+const SOAK_MIN = 15, SOAK_STEP = FAST ? 200 : 10000; // fast: the 90 samples come every 0.2 s, labeled as 10 s
+let soakLog = null;
+function drawSoak(){
+  const c = $('soakChart'), x = c.getContext('2d'), dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = c.clientWidth, h = c.clientHeight; c.width = w*dpr; c.height = h*dpr; x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, w, h);
+  const s = soakLog ? soakLog.samples : [];
+  const top = Math.max(35, ...s.map(p => p.fps)) * 1.1, X = t => t/(SOAK_MIN*60)*w, Y = f => h - f/top*h;
+  x.strokeStyle = '#284460'; x.setLineDash([3, 3]); x.beginPath(); x.moveTo(0, Y(24)); x.lineTo(w, Y(24)); x.stroke(); x.setLineDash([]);
+  x.fillStyle = '#8ea2b4'; x.font = '10px system-ui'; x.fillText('24 fps', 2, Y(24) - 3);
+  if (s.length > 1) { x.strokeStyle = '#43b482'; x.lineWidth = 2; x.beginPath(); s.forEach((p, i) => i ? x.lineTo(X(p.t), Y(p.fps)) : x.moveTo(X(p.t), Y(p.fps))); x.stroke(); }
+}
+function renderSoak(){
+  const s = soakLog ? soakLog.samples : [], v = s.length ? RT.soakVerdict(s) : null, last = s[s.length - 1];
+  $('soakOut').innerHTML = !s.length ? `${SOAK_MIN} minutes on the selected model. Keep moving in front of the camera.` :
+    `<div class="rows"><div><span>Elapsed</span><span>${n(last.t/60, 1)} of ${SOAK_MIN} min</span></div>` +
+    `<div><span>Now</span><span>${n(last.fps)} fps · p95 ${n(last.p95)} ms</span></div>` +
+    `<div><span>First minute / last minute</span><span>${n(v.first)} / ${n(v.last)} fps</span></div></div>` +
+    (soakLog.done && !soakLog.complete ? `<div>Stopped at ${n(last.t/60, 1)} min; the verdict needs the full ${SOAK_MIN}.</div>` : '') +
+    (soakLog.complete ? `<div class="verdict ${v.pass ? 'ok' : 'bad'}">${v.pass ? 'Pass: held ' + n(v.ratio*100) + '% of its first-minute fps' : 'Throttled: ' + n(v.ratio*100) + '% of first-minute fps, last minute ' + n(v.last) + ' fps'}</div>` : '');
+  $('soakSave').hidden = !(soakLog && soakLog.done);
+  drawSoak();
+}
+async function soak(){
+  if (busy === 'soak') { cancelled.soak = true; return; }
+  if (!claim('soak')) return;
+  const btn = $('soakBtn'); btn.textContent = 'Stop soak'; btn.classList.add('on');
+  soakLog = {at:new Date().toISOString(), model:L.model, delegate:L.delegate, device:device(), samples:[], done:false};
+  say('Soak test. ' + SOAK_MIN + ' minutes.');
+  const t0 = now(); let inf = [], det = 0, body = 0, cam0 = L.camCount; L.gapMax = 0;
+  const fn = f => { inf.push(f.inf); det++; if (f.lm) body++; };
+  L.on.add(fn);
+  try {
+    for (let k = 1; k <= SOAK_MIN*60*1000/SOAK_STEP; k++) {
+      if (!await wait(t0 + k*SOAK_STEP - now(), 'soak')) break;
+      const sec = 10, real = SOAK_STEP/1000;
+      soakLog.samples.push({t:k*sec, fps:det/real, camFps:L.camCount > cam0 ? (L.camCount - cam0)/real : null,
+        p50:RT.percentile(inf, 0.5), p95:RT.percentile(inf, 0.95), gap:L.gapMax, body:det ? body/det : 0});
+      inf = []; det = 0; body = 0; cam0 = L.camCount; L.gapMax = 0;
+      if (k % 30 === 0 && k*sec < SOAK_MIN*60) say(Math.round(k*sec/60) + ' minutes.');
+      status(`Soak: ${n(k*sec/60, 1)} of ${SOAK_MIN} min`);
+      renderSoak();
+    }
+  } finally { L.on.delete(fn); }
+  const full = soakLog.samples.length && soakLog.samples[soakLog.samples.length - 1].t >= SOAK_MIN*60;
+  soakLog.done = soakLog.samples.length > 0; soakLog.complete = full; soakLog.verdict = RT.soakVerdict(soakLog.samples);
+  if (full) { store.set('soak', soakLog); say('Soak done.'); beep(880, 0.15); }
+  renderSoak();
+  btn.textContent = 'Thermal soak'; btn.classList.remove('on');
+  release('soak'); status(statusLine());
+}
+
+$('benchBtn').addEventListener('click', bench);
+$('soakBtn').addEventListener('click', soak);
+$('soakSave').addEventListener('click', () => soakLog && saveFile(`room-time-soak-${stamp()}.json`, jsonBlob(soakLog)));
+$('benchSave').addEventListener('click', () => { const b = store.get('bench'); if (b) saveFile(`room-time-bench-${stamp()}.json`, jsonBlob(b)); });
+{ const b = store.get('bench'); renderBench(b ? b.rows : [], b ? 'Last run ' + b.at.slice(0, 10) : ''); $('benchSave').hidden = !b; }
+{ const s = store.get('soak'); if (s) { soakLog = s; } requestAnimationFrame(renderSoak); }
+L.closers.push(() => { cancelled.bench = cancelled.soak = true; });
+
+Object.assign(globalThis.RoomTimeLab, {store, saveFile, jsonBlob, stamp, device, wait, claim, release, cancelled});
 })();
 </script>
 </body>
