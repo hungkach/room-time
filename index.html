@@ -109,6 +109,40 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   #deck{height:auto}
 }
 @media (prefers-reduced-motion:reduce){.move{transition:none}}
+
+/* camera check (Phase 0) */
+.actions.one{grid-template-columns:1fr}
+#lab{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;padding-block:8px 10px}
+#labTop{display:flex;align-items:center;gap:10px}
+#labTop h2{font-family:var(--f-display);font-weight:700;font-size:1.5rem;line-height:1;margin:0;flex:none}
+#labStatus{flex:1;min-width:0;font-size:.85rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#labMain{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:10px}
+#labStage{position:relative;min-height:0;border-radius:14px;overflow:hidden;background:#000;display:grid;place-items:center}
+#labView{position:relative;width:100%;height:100%}
+#labView.mirror{transform:scaleX(-1)}
+#labVideo,#labSkel{position:absolute;inset:0;width:100%;height:100%;display:block}
+#labVideo{object-fit:fill}
+#labHud{position:absolute;left:8px;top:8px;font:12px/1.35 ui-monospace,Menlo,monospace;color:var(--ink);background:var(--shade);padding:6px 8px;border-radius:8px;white-space:pre;pointer-events:none}
+#labHint{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);font-family:var(--f-display);font-weight:700;font-size:1.8rem;line-height:1.1;background:var(--shade);padding:4px 14px;border-radius:10px;white-space:nowrap;pointer-events:none}
+#labEmpty{position:absolute;inset:0;display:grid;place-items:center;padding:20px;text-align:center;color:var(--muted);font-size:.95rem;line-height:1.5}
+#labSide{min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:4px}
+.lbtns{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.lbtns button,.lsel{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:10px 4px;font-family:var(--f-display);font-weight:600;font-size:1.1rem;line-height:1.1}
+.lbtns button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.lbtns button.go{background:var(--red);border-color:var(--red);color:var(--on-red)}
+.lbtns button:disabled{opacity:.4}
+.lbtns .span2{grid-column:1/-1}
+.lsel{width:100%;color:var(--ink);font-family:var(--f-body);font-weight:500;font-size:.85rem;padding:8px}
+.lcard{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:.86rem;line-height:1.4}
+.lcard h3{margin:0;font-size:.8rem;font-weight:500;color:var(--muted);letter-spacing:.02em}
+.lcard .rows{font-size:.86rem;gap:4px}
+.lcard .verdict{font-weight:600}
+.lcard .verdict.ok{color:var(--green)} .lcard .verdict.bad{color:var(--amber)}
+@media (orientation:portrait),(max-width:760px){
+  #lab{overflow-y:auto}
+  #labMain{grid-template-columns:1fr;grid-template-rows:minmax(260px,52vh) auto}
+  #labSide{overflow:visible}
+}
 </style>
 </head>
 <body>
@@ -159,6 +193,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       <button class="primary" id="startBtn">Start session</button>
       <button class="secondary" id="autoBtn">Watch auto-play</button>
     </div>
+    <div class="actions one"><button class="secondary" id="labBtn">Camera check</button></div>
 
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
@@ -198,6 +233,35 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         <button class="move" id="bSprawl">Sprawl</button>
         <button class="move" id="bShot">Shot</button>
         <button class="move" id="bSnap">Snap</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="lab" hidden>
+    <div id="labTop">
+      <h2>Camera check</h2>
+      <div id="labStatus">Camera off</div>
+      <button class="ibtn" id="labBack" aria-label="Back to menu"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="labMain">
+      <div id="labStage">
+        <div id="labView"><video id="labVideo" playsinline muted></video><canvas id="labSkel"></canvas></div>
+        <div id="labEmpty">Prop the iPad in landscape at hip height, about 6 ft away, front camera facing you. Turn off Center Stage in Control Center. Then tap Start camera.</div>
+        <div id="labHud" hidden></div>
+        <div id="labHint" hidden></div>
+      </div>
+      <div id="labSide">
+        <div class="seg c3" id="labModel">
+          <button data-v="lite">Lite<small>fastest</small></button>
+          <button data-v="full">Full<small>default</small></button>
+          <button data-v="heavy">Heavy<small>slowest</small></button>
+        </div>
+        <div class="lbtns">
+          <button class="go span2" id="labStart">Start camera</button>
+          <button id="labDebug" class="on">Debug</button>
+          <button id="labStop" disabled>Stop</button>
+        </div>
+        <select class="lsel" id="labCam" hidden aria-label="Camera"></select>
       </div>
     </div>
   </section>
@@ -1221,6 +1285,268 @@ function frame(ts){
 }
 requestAnimationFrame(frame);
 document.addEventListener('visibilitychange', () => { if (document.hidden && S && S.mode !== 'done') S.paused = true; });
+})();
+</script>
+<script id="rt-lab">
+// Camera check (Phase 0): camera, pose model, debug overlay. Runs beside the touch prototype and never touches it.
+// Camera opening adapted from body-arcade engine/pose-source.js at 12ef6b8 (openCamera front_wide, widestZoom).
+(() => {
+const RT = globalThis.RoomTime;
+const $ = id => document.getElementById(id);
+const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1';
+const MODEL_URL = n => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${n}/float16/1/pose_landmarker_${n}.task`;
+const BONES = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,29],[29,31],[27,31],[28,30],[30,32],[28,32]];
+const VIS_KEYS = [['N',0],['LS',11],['RS',12],['LE',13],['RE',14],['LW',15],['RW',16],['LH',23],['RH',24],['LK',25],['RK',26],['LA',27],['RA',28]];
+
+const video = $('labVideo'), skel = $('labSkel'), sctx = skel.getContext('2d');
+const L = {
+  vision:null, fileset:null, lmk:null, model:null, delegate:null, loading:false,
+  stream:null, cam:null, src:null, mirror:false, raf:0, lastTs:0, lastVT:-1,
+  det:[], camT:[], rafT:[], cur:null, debug:true, wake:null, on:new Set()
+};
+try { L.model = localStorage.getItem('roomtime.model') || 'full'; } catch(e) { L.model = 'full'; }
+const want = { model: L.model };
+
+const status = t => { $('labStatus').textContent = t; };
+const now = () => performance.now();
+const stopStream = st => { if (st) st.getTracks().forEach(t => t.stop()); };
+const track = st => st && st.getVideoTracks()[0];
+
+/* ---------- audio: unlocks only inside a tap on iOS ---------- */
+let AC = null;
+function unlockAudio(){
+  try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch(e) {}
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch(e) {}
+}
+function say(text){
+  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1.1; u.pitch = 0.92; speechSynthesis.speak(u); } catch(e) {}
+}
+function beep(freq, dur){
+  if (!AC) return;
+  try { const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain(); o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.15, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(AC.destination); o.start(t); o.stop(t + dur + 0.02); } catch(e) {}
+}
+
+/* ---------- wake lock ---------- */
+async function lockScreen(){ try { if (navigator.wakeLock && !L.wake) { L.wake = await navigator.wakeLock.request('screen'); L.wake.addEventListener('release', () => { L.wake = null; }); } } catch(e) {} }
+function unlockScreen(){ try { L.wake && L.wake.release(); } catch(e) {} L.wake = null; }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && L.src) lockScreen(); });
+
+/* ---------- camera ---------- */
+// The front camera's whole 4:3 picture (a 16:9 request crops the ultra-wide's top and bottom),
+// zoomed all the way out where the browser allows. A front camera listed as ultra wide is preferred.
+async function openCamera(deviceId){
+  const md = navigator.mediaDevices;
+  const base = {width:{ideal:1920}, height:{ideal:1440}, aspectRatio:{ideal:4/3}, frameRate:{ideal:30}};
+  const get = v => md.getUserMedia({audio:false, video:Object.assign({}, base, v)});
+  let st = await get(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:'user'});
+  const cams = (await md.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  if (!deviceId) {
+    const uw = cams.find(d => /front/i.test(d.label) && /ultra ?wide/i.test(d.label));
+    if (uw && uw.label !== track(st).label) { try { const s2 = await get({deviceId:{exact:uw.deviceId}}); stopStream(st); st = s2; } catch(e) {} }
+  }
+  const tr = track(st);
+  let zoomMin = null;
+  try {
+    const caps = tr.getCapabilities ? tr.getCapabilities() : {};
+    const cur = tr.getSettings ? tr.getSettings().zoom : undefined;
+    if (caps.zoom) { zoomMin = caps.zoom.min; if (caps.zoom.min < (cur == null ? 1 : cur)) await tr.applyConstraints({advanced:[{zoom:caps.zoom.min}]}); }
+  } catch(e) {}
+  const set = tr.getSettings ? tr.getSettings() : {};
+  return {stream:st, cams, info:{label:tr.label || '', deviceId:set.deviceId || deviceId || '', facing:set.facingMode || '', width:set.width || null, height:set.height || null, zoom:set.zoom == null ? null : set.zoom, zoomMin, fps:set.frameRate || null}};
+}
+
+/* ---------- pose model ---------- */
+async function loadModel(name){
+  if (L.lmk && L.model === name) return;
+  L.loading = true; status('Loading ' + name + ' model');
+  try {
+    if (!L.vision) { L.vision = await import(MP + '/vision_bundle.mjs'); L.fileset = await L.vision.FilesetResolver.forVisionTasks(MP + '/wasm'); }
+    if (L.lmk) { try { L.lmk.close(); } catch(e) {} L.lmk = null; }
+    const opts = delegate => ({baseOptions:{modelAssetPath:MODEL_URL(name), delegate}, runningMode:'VIDEO', numPoses:1,
+      minPoseDetectionConfidence:0.5, minPosePresenceConfidence:0.5, minTrackingConfidence:0.5});
+    try { L.lmk = await L.vision.PoseLandmarker.createFromOptions(L.fileset, opts('GPU')); L.delegate = 'GPU'; }
+    catch(e) { L.lmk = await L.vision.PoseLandmarker.createFromOptions(L.fileset, opts('CPU')); L.delegate = 'CPU'; }
+    L.model = name; L.det = []; L.cur = null;
+    try { localStorage.setItem('roomtime.model', name); } catch(e) {}
+  } finally { L.loading = false; }
+}
+async function switchModel(name){
+  want.model = name; renderModel();
+  if (!L.vision && !L.src) { L.model = name; return; }
+  await loadModel(name);
+  status(statusLine());
+}
+function renderModel(){ $('labModel').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === want.model))); }
+
+/* ---------- start / stop ---------- */
+async function startCamera(deviceId){
+  stopSource();
+  $('labEmpty').hidden = true;
+  try {
+    if (!window.isSecureContext) throw new Error('The camera needs https.');
+    status('Starting camera');
+    const c = await openCamera(deviceId);
+    L.stream = c.stream; L.cam = c.info; L.src = 'camera';
+    L.mirror = /front|facetime/i.test(c.info.label) || c.info.facing === 'user' || !c.info.facing;
+    video.srcObject = L.stream; video.muted = true; video.playsInline = true;
+    await video.play();
+    fillCams(c.cams, c.info.deviceId);
+    await loadModel(want.model);
+    begin();
+  } catch(e) {
+    status('Camera error: ' + (e && e.message || e)); $('labEmpty').hidden = false; stopSource();
+  }
+}
+function begin(){
+  $('labView').classList.toggle('mirror', L.mirror);
+  $('labStop').disabled = false; $('labStart').textContent = 'Restart camera';
+  L.lastVT = -1; L.det = []; L.camT = []; L.rafT = [];
+  fitView(); lockScreen(); watchFrames();
+  cancelAnimationFrame(L.raf); L.raf = requestAnimationFrame(tick);
+  status(statusLine());
+}
+function stopSource(){
+  cancelAnimationFrame(L.raf); L.raf = 0;
+  stopStream(L.stream); L.stream = null;
+  try { video.pause(); } catch(e) {}
+  video.srcObject = null;
+  if (L.fileUrl) { video.removeAttribute('src'); video.load(); URL.revokeObjectURL(L.fileUrl); L.fileUrl = null; }
+  L.src = null; L.cur = null;
+  $('labStop').disabled = true; $('labStart').textContent = 'Start camera';
+  $('labHud').hidden = true; $('labHint').hidden = true;
+  sctx.clearRect(0, 0, skel.width, skel.height);
+  unlockScreen();
+}
+function fillCams(cams, id){
+  const sel = $('labCam');
+  sel.innerHTML = cams.map((c, i) => `<option value="${c.deviceId}">${c.label || 'Camera ' + (i + 1)}</option>`).join('');
+  sel.value = id; sel.hidden = cams.length < 2;
+}
+function statusLine(){
+  if (!L.src) return 'Camera off';
+  const c = L.cam;
+  const cam = L.src === 'file' ? 'video file' : `${c.label || 'camera'} ${c.width}x${c.height}` + (c.zoom != null ? ` zoom ${(+c.zoom).toFixed(2)}` + (c.zoomMin != null ? ` (min ${(+c.zoomMin).toFixed(2)})` : '') : ' no zoom control');
+  return `${cam} · ${L.model} ${L.delegate || ''}`;
+}
+
+// counts real camera frames where the browser can (requestVideoFrameCallback)
+function watchFrames(){
+  if (!video.requestVideoFrameCallback) return;
+  const cb = () => { if (!L.src) return; pushWin(L.camT, now()); video.requestVideoFrameCallback(cb); };
+  video.requestVideoFrameCallback(cb);
+}
+
+/* ---------- loop ---------- */
+function pushWin(a, item, t){ a.push(item); const tt = t == null ? item : t; while (a.length && tt - (a[0].t == null ? a[0] : a[0].t) > 2000) a.shift(); }
+function rate(a){ if (a.length < 2) return 0; const f = a[0].t == null ? a[0] : a[0].t, l = a[a.length - 1].t == null ? a[a.length - 1] : a[a.length - 1].t; return (a.length - 1)*1000/Math.max(1, l - f); }
+function stats(){
+  const inf = L.det.map(d => d.inf);
+  let gap = 0; for (let i = 1; i < L.rafT.length; i++) gap = Math.max(gap, L.rafT[i] - L.rafT[i - 1]);
+  return {detectFps:rate(L.det), camFps:L.camT.length ? rate(L.camT) : null, rafFps:rate(L.rafT), p50:RT.percentile(inf, 0.5), p95:RT.percentile(inf, 0.95), gap};
+}
+
+function tick(){
+  L.raf = requestAnimationFrame(tick);
+  const t = now();
+  pushWin(L.rafT, t);
+  if (L.lmk && !L.loading && video.readyState >= 2 && video.currentTime !== L.lastVT) {
+    L.lastVT = video.currentTime;
+    const ts = RT.nextTs(L.lastTs, t); L.lastTs = ts;
+    let res = null; const t0 = now();
+    try { res = L.lmk.detectForVideo(video, ts); } catch(e) { status('Pose error: ' + e.message); }
+    const inf = now() - t0;
+    if (res) onResult(res, inf, t);
+  }
+  draw();
+}
+
+function onResult(res, inf, t){
+  pushWin(L.det, {t, inf}, t);
+  const lm = res.landmarks && res.landmarks[0] ? RT.pack(res.landmarks[0]) : null;
+  const wl = res.worldLandmarks && res.worldLandmarks[0] ? RT.pack(res.worldLandmarks[0]) : null;
+  const aspect = video.videoWidth/Math.max(1, video.videoHeight);
+  const m = lm ? RT.measure(lm, wl, aspect) : null;
+  const f = {t, vt:video.currentTime*1000, lm, wl, aspect, w:video.videoWidth, h:video.videoHeight, inf, m, fc:RT.frameCheck(lm)};
+  L.cur = f;
+  for (const fn of L.on) { try { fn(f); } catch(e) { console.error(e); } }
+}
+
+/* ---------- drawing ---------- */
+function fitView(){
+  const st = $('labStage').getBoundingClientRect(), v = $('labView');
+  const a = (video.videoWidth && video.videoHeight) ? video.videoWidth/video.videoHeight : 4/3;
+  let w = st.width, h = w/a; if (h > st.height) { h = st.height; w = h*a; }
+  v.style.width = w + 'px'; v.style.height = h + 'px';
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  skel.width = Math.round(w*dpr); skel.height = Math.round(h*dpr);
+}
+window.addEventListener('resize', () => { if (!$('lab').hidden) fitView(); });
+video.addEventListener('loadedmetadata', fitView);
+
+const visCol = v => v >= 0.8 ? '#43b482' : v >= 0.5 ? '#e2a23b' : '#d6483d';
+function draw(){
+  const W = skel.width, H = skel.height, f = L.cur;
+  sctx.clearRect(0, 0, W, H);
+  if (f && f.lm && L.debug) {
+    const p = i => [f.lm[i][0]*W, f.lm[i][1]*H];
+    sctx.lineCap = 'round'; sctx.lineWidth = Math.max(2, W/320);
+    for (const [a, b] of BONES) {
+      sctx.strokeStyle = visCol(Math.min(f.lm[a][3], f.lm[b][3])); sctx.globalAlpha = 0.85;
+      sctx.beginPath(); sctx.moveTo(...p(a)); sctx.lineTo(...p(b)); sctx.stroke();
+    }
+    sctx.globalAlpha = 1;
+    for (let i = 0; i < 33; i++) { if (i > 0 && i < 11) continue; sctx.fillStyle = visCol(f.lm[i][3]); sctx.beginPath(); sctx.arc(...p(i), Math.max(3, W/220), 0, Math.PI*2); sctx.fill(); }
+  }
+  for (const fn of L.drawers) fn(sctx, W, H, f);
+  hud(f);
+}
+L.drawers = [];
+
+let hudAt = 0;
+function hud(f){
+  const t = now(); if (t - hudAt < 250) return; hudAt = t;
+  const hint = $('labHint');
+  const msg = !L.src ? '' : !f ? (L.loading ? 'Loading model' : '') : !f.lm ? 'No body seen' : f.fc.ok ? '' : f.fc.hint;
+  hint.hidden = !msg; if (msg) hint.textContent = msg;
+  const el = $('labHud'); el.hidden = !L.debug || !L.src;
+  if (el.hidden) return;
+  const s = stats(), n = (v, d = 0) => v == null ? '-' : (+v).toFixed(d);
+  const lines = [
+    `camera ${n(s.camFps)} fps  detect ${n(s.detectFps)} fps  screen ${n(s.rafFps)} fps`,
+    `inference p50 ${n(s.p50, 1)} ms  p95 ${n(s.p95, 1)} ms  worst gap ${n(s.gap)} ms`,
+    `${L.model} ${L.delegate || ''}  ${video.videoWidth}x${video.videoHeight}`
+  ];
+  if (f && f.lm) {
+    lines.push(VIS_KEYS.map(([k, i]) => `${k} ${Math.round(f.lm[i][3]*100)}`).slice(0, 7).join(' '));
+    lines.push(VIS_KEYS.map(([k, i]) => `${k} ${Math.round(f.lm[i][3]*100)}`).slice(7).join(' '));
+  }
+  for (const fn of L.hudLines) { const x = fn(f); if (x) lines.push(x); }
+  el.textContent = lines.join('\n');
+}
+L.hudLines = [];
+
+/* ---------- screen ---------- */
+function openLab(){
+  $('menu').hidden = true; $('lab').hidden = false; renderModel();
+  requestAnimationFrame(fitView);
+}
+function closeLab(){
+  stopSource(); for (const fn of L.closers) fn();
+  $('lab').hidden = true; $('menu').hidden = false;
+}
+L.closers = [];
+$('labBtn').addEventListener('click', () => { unlockAudio(); openLab(); });
+$('labBack').addEventListener('click', closeLab);
+$('labStart').addEventListener('click', () => { unlockAudio(); startCamera(); });
+$('labStop').addEventListener('click', () => { stopSource(); status('Camera off'); $('labEmpty').hidden = false; });
+$('labCam').addEventListener('change', e => startCamera(e.target.value));
+$('labDebug').addEventListener('click', e => { L.debug = !L.debug; e.target.classList.toggle('on', L.debug); });
+$('labModel').addEventListener('click', e => { const b = e.target.closest('button'); if (b) switchModel(b.dataset.v).catch(err => status('Model error: ' + err.message)); });
+
+// shared with the Phase 0 tools below
+globalThis.RoomTimeLab = {L, RT, $, video, status, statusLine, say, beep, stats, loadModel, switchModel, startCamera, stopSource, begin, fitView, want, unlockAudio, lockScreen};
 })();
 </script>
 </body>
