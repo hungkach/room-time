@@ -305,7 +305,12 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 
   RT.BAND = {lo:0.32, hi:0.58};   // the prototype's stance band, in level units (1 = standing tall)
   RT.STANCE_LEVEL = 0.45;         // where the calibrated square stance sits on the level scale
-  RT.POSES = ['stand', 'square', 'stagger'];   // held poses; the walls come from moving side to side (RT.wallsFrom)
+  RT.POSES = ['stand', 'square', 'stagger'];   // held poses; the floor comes from shuffling side to side (RT.floorFrom)
+  // The camera's vertical field of view for a 4:3 picture: the iPad front ultra-wide (122 degrees across the diagonal).
+  // Only the distance in feet uses it; sideways and forward-back meters come from the body itself.
+  RT.CAMERA = {vfovDeg:94};
+  // Focal length in picture heights for a frame of this aspect (a wider frame is the 4:3 picture cropped top and bottom).
+  RT.focal = aspect => 0.5/(Math.tan(RT.CAMERA.vfovDeg*Math.PI/360)*Math.min(1, (4/3)/aspect));
   const KEY = [0, 11, 12, 23, 24, 25, 26, 27, 28]; // nose, shoulders, hips, knees, ankles: must be in frame
 
   const P = p => Array.isArray(p) ? {x:p[0], y:p[1], z:p[2], v:p[3] == null ? 1 : p[3]} : {x:p.x, y:p.y, z:p.z, v:p.visibility == null ? 1 : p.visibility};
@@ -343,7 +348,24 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   RT.measure = function(lm, wl, aspect){
     if (!lm) return null;
     const vis = Math.min(...KEY.map(i => P(lm[i]).v));
-    return {img:space(lm, aspect), world:wl ? space(wl, 1) : null, hipX:mid(P(lm[23]), P(lm[24])).x, vis};
+    const m = {img:space(lm, aspect), world:wl ? space(wl, 1) : null, hipX:mid(P(lm[23]), P(lm[24])).x, vis, aspect};
+    // Meters per picture height at the hips: the shoulders' and hips' side-to-side span in meters (world landmarks)
+    // over the same span in the picture. Both shrink together when the body turns, so turning doesn't change it.
+    // Leaning in puts the shoulders nearer the camera than the hips, so their picture span is scaled back to the
+    // hips' depth (world z; MediaPipe tends to flatten depth, so this corrects part of it). From k: sideways meters,
+    // distance and eye height.
+    const ax = (a, i, j) => Math.abs(P(a[j]).x - P(a[i]).x);
+    const wSh = wl ? ax(wl, 11, 12) : 0, wHp = wl ? ax(wl, 23, 24) : 0, iSh = ax(lm, 11, 12)*aspect, iHp = ax(lm, 23, 24)*aspect;
+    if (wl && wSh + wHp > 0.15 && iSh + iHp > 0) {
+      const dz = (P(wl[11]).z + P(wl[12]).z - P(wl[23]).z - P(wl[24]).z)/2, f = RT.focal(aspect);
+      let k = (wSh + wHp)/(iSh + iHp);
+      for (let it = 0; it < 3; it++) { const D = k*f; if (D > 0.5) k = (wSh + wHp)/(iSh*(D + dz)/D + iHp); }
+      m.k = k;
+      m.Xcam = (m.hipX - 0.5)*aspect*k;             // hips sideways from the camera's axis, toward the picture's +x
+      m.D = k*RT.focal(aspect);                    // camera to hips (uses the assumed lens angle)
+      m.eye = m.img.noseH*k + 0.11;                // eyes above the floor: nose over the ankles, plus ankle and eye offsets
+    }
+    return m;
   };
 
   // Hip height against standing, three ways, so Phase 0 can show which one holds up:
@@ -369,12 +391,11 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     return 'stance';
   };
 
-  // Floor position from the hip's image x: -1 at the left wall capture, +1 at the right.
-  RT.floorX = function(hipX, cal){
-    if (!cal || !cal.wallL || !cal.wallR) return null;
-    const a = cal.wallL.hipX, b = cal.wallR.hipX;
-    if (Math.abs(b - a) < 0.05) return null;
-    return Math.max(-1.5, Math.min(1.5, -1 + 2*(hipX - a)/(b - a)));
+  // Floor position from your sideways meters: -1 at your left edge, +1 at your right.
+  RT.floorX = function(X, cal){
+    if (!cal || !cal.floor || !num(X)) return null;
+    const f = cal.floor;
+    return Math.max(-1.5, Math.min(1.5, -1 + 2*(X - f.left)/(f.right - f.left)));
   };
 
   // Live readouts against a calibration. src picks the hip height source: 'world', 'imgS' or 'img'.
@@ -396,7 +417,12 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     out.src = src;
     if (cal.square) out.level = RT.levelFromRatio(out.ratios[src], cal.square.ratios[src]);
     out.zone = RT.stanceZone(out.level);
-    out.floorX = RT.floorX(m.hipX, cal);
+    // in meters: sideways from the camera's axis (+ toward your right), the distance, and forward-back since the square stance
+    out.X = num(m.Xcam) ? m.Xcam*cal.stand.img.dir : null;
+    out.D = num(m.D) ? m.D : null;
+    out.eye = num(m.eye) ? m.eye : null;
+    out.z = out.D != null && cal.square && num(cal.square.D) ? out.D - cal.square.D : null;   // + is back, away from the iPad
+    out.floorX = RT.floorX(out.X, cal);
     // head height against standing (your eyes in the 3D view), from the same source as the hips
     const st = cal.stand;
     const head = {img: m.img.noseH/st.img.noseH, imgS: (m.img.noseH/m.img.S)/(st.img.noseH/st.img.S),
@@ -426,18 +452,23 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     return out;
   };
 
-  // Walls from the hips' image x while the player moves side to side (the warm-up): the 2nd and 98th
-  // percentiles, so a stray frame can't set a wall. dir (from the standing capture) says which side is their left.
-  RT.wallsFrom = function(xs, dir, minRange){
-    const lo = RT.percentile(xs, 0.02), hi = RT.percentile(xs, 0.98);
-    if (lo == null || hi - lo < (minRange == null ? 0.1 : minRange)) return null;
-    return dir > 0 ? {wallL:{hipX:lo}, wallR:{hipX:hi}} : {wallL:{hipX:hi}, wallR:{hipX:lo}};
+  // Your floor from your sideways meters while you shuffle side to side (the warm-up): the 2nd and 98th
+  // percentiles, so a stray frame can't set an edge. Meters from the camera's axis, + toward your right.
+  RT.floorFrom = function(xs, minWidth){
+    const left = RT.percentile(xs, 0.02), right = RT.percentile(xs, 0.98);
+    if (left == null || right - left < (minWidth == null ? 0.5 : minWidth)) return null;
+    return {left, right, width:right - left, center:(left + right)/2};
   };
-  // Learns the walls from every hip position it is given; the range only ever widens.
-  RT.WallTracker = class {
-    constructor(dir){ this.dir = dir; this.xs = []; }
+  // Learns the floor from every position it is given; it only ever widens what it started with.
+  RT.FloorTracker = class {
+    constructor(start){ this.start = start || null; this.xs = []; }
     push(x){ if (num(x)) { this.xs.push(x); if (this.xs.length > 6000) this.xs.splice(0, 1000); } }
-    walls(){ return RT.wallsFrom(this.xs, this.dir); }
+    floor(){
+      const f = RT.floorFrom(this.xs), s = this.start;
+      if (!f || !s) return f || s;
+      const left = Math.min(s.left, f.left), right = Math.max(s.right, f.right);
+      return {left, right, width:right - left, center:(left + right)/2};
+    }
   };
 
   // Calibration from the captured measures of each pose: {stand: [m...], square: [...], stagger: [...], sweep: [m...]}.
@@ -445,7 +476,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     const cal = Object.assign({v:1, at:null}, meta || {});
     for (const pose of RT.POSES) if (caps[pose] && caps[pose].length) cal[pose] = RT.medianTree(caps[pose]);
     if (!cal.stand) return cal;
-    if (caps.sweep && caps.sweep.length) Object.assign(cal, RT.wallsFrom(caps.sweep.map(m => m.hipX), cal.stand.img.dir) || {});
+    if (caps.sweep && caps.sweep.length) { const f = RT.floorFrom(caps.sweep.map(m => num(m.Xcam) ? m.Xcam*cal.stand.img.dir : null)); if (f) cal.floor = f; }
     for (const pose of ['square', 'stagger']) {
       const c = cal[pose]; if (!c) continue;
       c.ratios = RT.hipRatios(c, cal.stand);
@@ -1355,7 +1386,7 @@ function draw(){
     else if (S.mode === 'calib') {
       ctx.font = FD(700, 44); ctx.fillText('Warm-up calibration', W/2, H*0.36);
       ctx.font = FB(500, 15); ctx.fillText(S.calibNote || '', W/2, H*0.36 + 30);
-      ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Then the warm-in: circle each way to your walls.', W/2, H*0.36 + 54);
+      ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Three holds, then shuffle side to side to the edges of the picture.', W/2, H*0.36 + 54);
     }
     else {
       const next = S.plan[S.r + 1];
@@ -1853,12 +1884,13 @@ L.closers.push(() => { cancelled.bench = cancelled.soak = true; });
 
 /* ---------- calibration ---------- */
 // Three held poses (a spoken cue, time to get there, a framing check, then 3 s of frames whose medians are kept),
-// then the walls from shuffling side to side. In camera play the warm-in's circling sets the walls instead.
+// then your floor in meters from shuffling side to side, out to the edges of the picture or your walls.
+// In camera play the warm-in's circling can still widen it.
 const POSE_INFO = {
   stand:   {name:'Standing', say:'Stand tall, feet under your hips. Hold.'},
   square:  {name:'Square stance', say:'Square stance. Hold.'},
   stagger: {name:'Staggered stance', say:'Staggered stance, your normal lead. Hold.'},
-  sweep:   {name:'Walls', say:'Now shuffle side to side, wall to wall, in your stance.'}
+  sweep:   {name:'Floor', say:'Now shuffle side to side in your stance, out to the edges of the picture or your walls.'}
 };
 const HOLD_MS = 3000, MIN_FRAMES = 5, FRAME_WAIT_MS = 20000, SWEEP_MS = FAST ? 4000 : 12000;
 // the calibration's progress, on the Camera check status line and on the game screen in camera play
@@ -1870,17 +1902,22 @@ function note(text){
 let cal = store.get('cal');
 L.cal = cal;
 
-// Side to side for SWEEP_MS: every hip position near the edges of the picture counts too.
+// Side to side for SWEEP_MS, in meters. A short high beep when you reach the edge of the picture.
 async function captureSweep(){
   const info = POSE_INFO.sweep;
   say(info.say); note('Calibrate: ' + info.name);
   if (!await wait(1500, 'cal')) return null;
-  const got = [], fn = f => { if (f.lm && f.m && f.m.vis >= 0.5) got.push({hipX:f.m.hipX}); };
+  let edgeAt = 0;
+  const got = [], fn = f => {
+    if (!f.lm || !f.m || f.m.vis < 0.5 || f.m.Xcam == null) return;
+    got.push({Xcam:f.m.Xcam});
+    if (f.fc.hint === 'Move to the middle' && f.t - edgeAt > 700) { edgeAt = f.t; beep(1320, 0.05); }
+  };
   beep(660, 0.1); L.on.add(fn);
   const ok = await wait(SWEEP_MS, 'cal');
   L.on.delete(fn);
   if (!ok) return null;
-  if (!cal || !cal.stand || !RT.wallsFrom(got.map(m => m.hipX), cal.stand.img.dir)) { say('Walls skipped, move further each way.'); note('Walls skipped: not enough side to side'); return null; }
+  if (!cal || !cal.stand || !RT.floorFrom(got.map(m => m.Xcam*cal.stand.img.dir))) { say('Floor skipped, move further each way.'); note('Floor skipped: not enough side to side'); return null; }
   beep(990, 0.12);
   return got;
 }
@@ -1914,7 +1951,7 @@ async function calibrate(poses){
   if (!claim('cal')) return;
   const btn = $('calBtn'); btn.textContent = 'Stop'; btn.classList.add('on');
   // poses not redone keep their saved medians, and the walls stay unless swept again
-  const oldWalls = cal && cal.wallL ? {wallL:cal.wallL, wallR:cal.wallR} : null, caps = {};
+  const oldFloor = cal && cal.floor ? cal.floor : null, caps = {};
   for (const p of RT.POSES) caps[p] = cal && cal[p] ? [cal[p]] : [];
   let got = 0;
   for (const p of poses) {
@@ -1926,9 +1963,12 @@ async function calibrate(poses){
   }
   if (got && caps.stand.length) {
     setCal(caps);
-    if (!caps.sweep && oldWalls) Object.assign(cal, oldWalls);
+    if (!caps.sweep && oldFloor) cal.floor = oldFloor;
     L.cal = cal; store.set('cal', cal);
-    say(poses.length > 1 ? 'Calibration saved.' : 'Saved.');
+    // what the camera measured, in feet
+    const ft = mm => Math.round(mm*3.281);
+    const facts = [cal.square && cal.square.D ? `You're about ${ft(cal.square.D)} feet away.` : '', cal.floor && caps.sweep ? `Floor ${ft(cal.floor.width)} feet wide.` : ''].join(' ');
+    say((poses.length > 1 ? 'Calibration saved. ' : 'Saved. ') + facts);
   } else if (got) say('Stand first, then the rest.');
   btn.textContent = 'Calibrate'; btn.classList.remove('on');
   release('cal'); status(statusLine()); renderCal();
@@ -1944,10 +1984,10 @@ function renderCal(){
   const stance = s => s ? `level ${n(RT.levelFromRatio(s.ratios.world, c.square.ratios.world), 2)} · hips ${n(s.ratios.world*100)}% · feet ${n(s.footWorld, 1)} S` : '-';
   $('calOut').innerHTML = !c || !c.stand ? 'Standing, square stance and staggered stance, then shuffle side to side, wall to wall. About 40 seconds; the iPad talks you through it.' :
     `<div class="rows">` +
-    row('stand', c.stand.world ? `hips ${n(c.stand.world.hipH, 2)} m · S ${n(c.stand.world.S, 2)} m` : `hips ${n(c.stand.img.hipH, 3)}`) +
+    row('stand', c.stand.world ? `hips ${n(c.stand.world.hipH, 2)} m · ${c.stand.D ? 'about ' + n(c.stand.D*3.281, 1) + ' ft away' : ''}` : `hips ${n(c.stand.img.hipH, 3)}`) +
     row('square', c.square ? `hips ${n(c.square.ratios.world*100)}% · feet ${n(c.square.footWorld, 1)} S` : '-') +
     row('stagger', c.stagger && c.square ? stance(c.stagger) : '-') +
-    row('sweep', c.wallL ? `hips from x ${n(c.wallL.hipX, 2)} to ${n(c.wallR.hipX, 2)}` : '-') +
+    row('sweep', c.floor ? `${n(c.floor.width*3.281, 1)} ft wall to wall (${n(c.floor.width, 2)} m)` : '-') +
     `</div><div>${(c.at || '').slice(0, 16).replace('T', ' ')} · ${c.w}x${c.h} · ${c.model}</div>` +
     (c.w && L.cur && (L.cur.w !== c.w || L.cur.h !== c.h) ? `<div class="verdict bad">The camera picture changed since; calibrate again.</div>` : '');
   $('calSave').hidden = !c;
@@ -2015,7 +2055,8 @@ function renderLive(){
     (r.ratios ? `<div><span>Hips vs standing</span><span>world ${n(r.ratios.world*100)} · img÷S ${n(r.ratios.imgS*100)} · img ${n(r.ratios.img*100)}%</span></div>` : '') +
     `<div><span>Feet</span><span>${n(r.footWorld, 2)} S world · ${n(r.footS, 2)} img${sq ? ' · square ' + n(sq.footWorld, 2) : ''}</span></div>` +
     `<div><span>Elbows L / R</span><span>${elb(r.elbowL)} / ${elb(r.elbowR)} img · ${n(r.elbowLWorld, 2)} / ${n(r.elbowRWorld, 2)} world</span></div>` +
-    (r.floorX != null ? `<div><span>Floor</span><span>${n(r.floorX, 2)} (wall to wall, -1 to 1)</span></div>` : '') +
+    (r.X != null ? `<div><span>Sideways</span><span>${n(r.X*100)} cm from the camera's line${r.floorX != null ? ' · floor ' + n(r.floorX, 2) : ''}</span></div>` : '') +
+    (r.D != null ? `<div><span>Distance</span><span>about ${n(r.D*3.281, 1)} ft${r.z != null ? ` · ${n(r.z*100)} cm from your stance spot` : ''} · eyes ${n(r.eye*100)} cm</span></div>` : '') +
     `</div>`;
 }
 L.drawers.push(renderLive);
@@ -2046,31 +2087,35 @@ L.on.add(f => {
   S.cam.seen = S.cam.seenOnce = true;
   S.cam.level = play.fl.filter(r.level, t);
   S.cam.floorX = r.floorX == null ? 0 : play.fx.filter(r.floorX, t);
-  // your eyes: standing eye height times your head height against standing; your head out over your hips moves the view
-  if (r.headRatio != null) S.cam.head = {eye:1.66*play.fh.filter(r.headRatio, t), dx:play.fhx.filter(r.headX || 0, t), roll:0};
+  // everything the 3D view needs in meters, 1:1 with you: half your floor's width, how far you've stepped toward
+  // or away from the iPad, and your eye height (else your head height against standing on a standard 1.66 m)
+  S.cam.halfW = cal.floor ? cal.floor.width/2 : null;
+  S.cam.z = r.z == null ? 0 : play.fz.filter(r.z, t);
+  const eye = r.eye != null ? r.eye : r.headRatio != null ? 1.66*r.headRatio : null;
+  if (eye != null) S.cam.head = {eye:play.fh.filter(eye, t), dx:play.fhx.filter(r.headX || 0, t), roll:0};
   const ev = play.det.push(RT.moveInput(f.t, f.m, r));
   if (ev && S.mode === 'work') G.camMove(ev.type, ev.from);
 });
-// the warm-in's circling sets the walls: every hip position while it runs, the range only widens
+// the warm-in's circling can widen the floor from the calibration's shuffle (it never narrows)
 L.on.add(f => {
   const S = globalThis.RoomTimeGame && globalThis.RoomTimeGame.S;
-  if (!play.on || !S || !S.cam || !f.m || S.mode !== 'work' || S.plan[S.r].phase !== 'warm' || !cal || !cal.stand) return;
-  if (!play.walls) play.walls = new RT.WallTracker(cal.stand.img.dir);
-  play.walls.push(f.m.hipX);
-  if (f.t - play.wallAt < 500) return;
-  play.wallAt = f.t;
-  const w = play.walls.walls();
-  if (w) { Object.assign(cal, w); L.cal = cal; store.set('cal', cal); }
+  if (!play.on || !S || !S.cam || !f.r || f.r.X == null || S.mode !== 'work' || S.plan[S.r].phase !== 'warm' || !cal || !cal.stand) return;
+  if (!play.floor) play.floor = new RT.FloorTracker(cal.floor);
+  play.floor.push(f.r.X);
+  if (f.t - play.floorAt < 500) return;
+  play.floorAt = f.t;
+  const fl = play.floor.floor();
+  if (fl && (!cal.floor || fl.width > cal.floor.width + 0.02)) { cal.floor = fl; L.cal = cal; store.set('cal', cal); }
 });
 function dock(on){
   const v = $('labView');
   (on ? $('pip') : $('labStage')).prepend(v);
   requestAnimationFrame(globalThis.RoomTimeLab.fitView);
 }
-// Camera play opens with the warm-up calibration: the three holds, then the warm-in round, whose circling sets the walls.
+// Camera play opens with the warm-up calibration: the three holds and the shuffle for your floor, then the warm-in.
 async function startCamPlay(){
   globalThis.RoomTimeLab.unlockAudio();
-  Object.assign(play, {on:true, det:new RT.MoveDetector(), fl:new RT.OneEuro(1.5, 0.6), fx:new RT.OneEuro(1.0, 0.4), fh:new RT.OneEuro(1.5, 0.6), fhx:new RT.OneEuro(1.0, 0.4), walls:null, wallAt:-1e9});
+  Object.assign(play, {on:true, det:new RT.MoveDetector(), fl:new RT.OneEuro(1.5, 0.6), fx:new RT.OneEuro(1.0, 0.4), fh:new RT.OneEuro(1.5, 0.6), fhx:new RT.OneEuro(1.0, 0.4), fz:new RT.OneEuro(1.0, 0.4), floor:null, floorAt:-1e9});
   dock(true);
   const G = globalThis.RoomTimeGame;
   G.start(false, true);
@@ -2079,7 +2124,7 @@ async function startCamPlay(){
   if (!L.src) { play.on = false; dock(false); say('The camera did not start. Try Camera check.'); G.S.calibNote = 'The camera did not start'; return; }
   play.skipCal = false;
   for (let tries = 0; tries < 2 && play.on && !play.skipCal; tries++) {
-    await calibrate(RT.POSES);
+    await calibrate([...RT.POSES, 'sweep']);
     if (cal && cal.stand && cal.square) break;
   }
   if (play.on && G.S && G.S.mode === 'calib') G.begin();
@@ -2247,19 +2292,27 @@ function noiseCanvas(size, amt, base){
 const bumpTex = new THREE.CanvasTexture(noiseCanvas(256, 70, 128));
 bumpTex.wrapS = bumpTex.wrapT = THREE.RepeatWrapping; bumpTex.repeat.set(3, 3);
 
-// The mat: 16 m square, the 9 m circle with the orange zone band, center circle and start lines.
+// The mat: 16 m square with the center circle and start lines. Touch play draws the 9 m circle with its orange
+// zone band. Camera play draws your real floor instead: in bounds between your two edges (halfW meters each side,
+// measured in calibration), the orange band beyond them, so the edge you see is where you'd step out.
 const MAT = 16, PX = 128, CIRCLE = 4.5, BAND = 0.6;
-function matTexture(){
+function matTexture(halfW){
   const c = document.createElement('canvas'); c.width = c.height = MAT*PX;
   const x = c.getContext('2d'), m = MAT*PX/2, r = v => v*PX;
   x.fillStyle = '#183654'; x.fillRect(0, 0, c.width, c.height);
-  x.fillStyle = '#a9472f'; x.beginPath(); x.arc(m, m, r(CIRCLE), 0, Math.PI*2); x.fill();
-  x.fillStyle = '#21466b'; x.beginPath(); x.arc(m, m, r(CIRCLE - BAND), 0, Math.PI*2); x.fill();
+  if (halfW) {
+    x.fillStyle = '#a9472f'; x.fillRect(m - r(halfW + BAND), 0, r(2*(halfW + BAND)), c.height);
+    x.fillStyle = '#21466b'; x.fillRect(m - r(halfW), 0, r(2*halfW), c.height);
+  } else {
+    x.fillStyle = '#a9472f'; x.beginPath(); x.arc(m, m, r(CIRCLE), 0, Math.PI*2); x.fill();
+    x.fillStyle = '#21466b'; x.beginPath(); x.arc(m, m, r(CIRCLE - BAND), 0, Math.PI*2); x.fill();
+  }
   // seams where the mat sections meet
   x.strokeStyle = 'rgba(0,0,0,.22)'; x.lineWidth = 3;
   for (let k = -MAT/2; k <= MAT/2; k += 2) { x.beginPath(); x.moveTo(m + r(k), 0); x.lineTo(m + r(k), c.height); x.stroke(); }
   x.strokeStyle = 'rgba(231,236,240,.85)'; x.lineWidth = r(0.05);
-  x.beginPath(); x.arc(m, m, r(CIRCLE), 0, Math.PI*2); x.stroke();
+  if (halfW) for (const sgn of [-1, 1]) { x.beginPath(); x.moveTo(m + sgn*r(halfW), 0); x.lineTo(m + sgn*r(halfW), c.height); x.stroke(); }
+  else { x.beginPath(); x.arc(m, m, r(CIRCLE), 0, Math.PI*2); x.stroke(); }
   x.beginPath(); x.arc(m, m, r(0.5), 0, Math.PI*2); x.stroke();
   x.lineWidth = r(0.05);
   x.strokeStyle = '#d6483d'; x.beginPath(); x.moveTo(m - r(0.5), m - r(0.15)); x.lineTo(m - r(0.5), m + r(0.15)); x.stroke();
@@ -2277,6 +2330,11 @@ const MAT_Z = -1.0; // the circle's center sits between you and him
 const mat = new THREE.Mesh(new THREE.PlaneGeometry(MAT, MAT),
   new THREE.MeshStandardMaterial({map:matTexture(), roughness:0.42, metalness:0, bumpMap:bumpTex, bumpScale:0.4}));
 mat.rotation.x = -Math.PI/2; mat.position.z = MAT_Z; mat.receiveShadow = true; scene.add(mat);
+let matHalf = 0; // the floor half width the mat is drawn for (0: the circle)
+function setMat(halfW){
+  if (Math.abs(halfW - matHalf) < 0.05) return;
+  matHalf = halfW; mat.material.map.dispose(); mat.material.map = matTexture(halfW || 0); mat.material.needsUpdate = true;
+}
 
 const ROOM = 9;
 const wallMat = new THREE.MeshStandardMaterial({color:0x121f2c, roughness:0.9});
@@ -2694,8 +2752,8 @@ ring.rotation.x = -Math.PI/2; ring.position.y = 0.01; scene.add(ring);
 const GLOW = {red:0xd6483d, green:0x43b482, amber:0xe2a23b, zone:0xe0703f};
 
 /* ---------- frame ---------- */
-const R = 4.2;  // your floor's -1..1 maps to this many meters each side of the circle's center
-const view = {eye:1.66, x:0, z:0, pitch:0, roll:0};
+const R = 4.2;  // touch play: your floor's -1..1 maps to this many meters each side of the circle's center
+const view = {eye:1.66, x:0, dx:0, z:0, pitch:0, roll:0};
 R3.view = view;
 function eyeFor(level){
   // level 1 standing (eye 1.66 m), 0.45 the square stance (1.18 m), lower is a level change or a sprawl
@@ -2723,7 +2781,10 @@ function frame(ms){
   // where your eyes are
   const a = S.action, ak = a ? clamp((time - a.t0)/a.dur, 0, 1) : 0, ab = Math.sin(ak*Math.PI);
   const cam = S.cam && S.cam.head;
-  let eye = cam ? cam.eye : eyeFor(S.level), dz = 0, pitch = 0;
+  // camera play is 1:1 in meters: half your measured floor each side, and your own steps toward and away from the iPad
+  const halfW = S.cam && S.cam.halfW ? S.cam.halfW : R;
+  setMat(S.cam && S.cam.halfW ? S.cam.halfW : 0);
+  let eye = cam ? cam.eye : eyeFor(S.level), dz = S.cam && S.cam.z != null ? clamp(S.cam.z, -0.9, 1.0) : 0, pitch = 0;
   if (a && !cam) {
     if (a.type === 'shot') { eye = lerp(eye, 0.78, ab); dz = -0.75*ab; }
     else if (a.type === 'sprawl') { eye = lerp(eye, 0.55, ab); dz = 0.3*ab; pitch = -0.35*ab; }
@@ -2731,7 +2792,8 @@ function frame(ms){
   }
   const k = Math.min(1, dt*14);
   view.eye = lerp(view.eye, eye, k); view.z = lerp(view.z, dz, k); view.pitch = lerp(view.pitch, pitch, k);
-  view.x = lerp(view.x, S.youX*R + (cam ? cam.dx : 0), Math.min(1, dt*12));
+  view.dx = cam ? cam.dx : 0;   // your head out over your hips
+  view.x = lerp(view.x, S.youX*halfW + view.dx, Math.min(1, dt*12));
   view.roll = lerp(view.roll, cam ? cam.roll : 0, k);
 
   // the opponent
@@ -2740,7 +2802,7 @@ function frame(ms){
   for (const n in cur) cur[n] += (target[n] - cur[n])*Math.min(1, dt*rate);
   if (o.state === 'circle') cur.p += Math.sin(time*3.2)*0.01;
   // he faces you from his spot and lunges along that line
-  const bx = o.x*R, bz = -1.75, yaw = Math.atan2(view.x - bx, 0.2 - bz);
+  const bx = o.x*halfW, bz = -1.75, yaw = Math.atan2(view.x - bx, 0.2 - bz);
   const ox = bx + Math.sin(yaw)*cur.z, oz = bz + Math.cos(yaw)*cur.z;
   applyPose(opp, cur, ox, oz, yaw, time, moving && o.state === 'circle');
 
