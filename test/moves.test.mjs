@@ -36,6 +36,14 @@ for (const [name, fr] of Object.entries(FRAMINGS)) {
     const ev = moves([{ ms: 0, ...SQ, handY: 1.15 }, { ms: 1000, ...SQ, handY: 1.15 }, { ms: 1250, ...SQ, handY: 0.66 }, { ms: 2200, ...SQ, handY: 0.66 }], fr);
     assert.equal(types(ev), 'snap');
   });
+  test(`down block: hands to the knees, a small drop, hips back (${name})`, () => {
+    const blk = { ...SQ, hip: 0.58, lean: 0.5, dist: 2.1, handY: 0.33 };
+    assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 1000, ...SQ }, { ms: 1250, ...blk }, { ms: 2200, ...blk }], fr)), 'down_block');
+  });
+  test(`a sprawl with the hands down is still a sprawl, not a down block (${name})`, () => {
+    const sp = { hip: 0.32, footW: 0.6, lean: 0.9, dist: 2.3, handY: 0.25 };
+    assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 1000, ...SQ }, { ms: 1300, ...sp }, { ms: 2500, ...sp }], fr)), 'sprawl');
+  });
   test(`nothing: a plain level change, a slow sink, circling, standing up (${name})`, () => {
     assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 1000, ...SQ }, { ms: 1250, ...SQ, hip: 0.54 }, { ms: 2500, ...SQ, hip: 0.54 }], fr)), '', 'level change');
     assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 3000, ...SQ, hip: 0.4, ramp: 2500 }, { ms: 4000, ...SQ, hip: 0.4 }], fr)), '', 'slow sink');

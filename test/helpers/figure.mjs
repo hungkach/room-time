@@ -20,6 +20,7 @@ export function figure(o = {}) {
     aspect: 4 / 3,      // frame width / height
     mirror: false,      // a mirrored frame (x flipped)
     handY: null,        // wrist height above the floor (default: just below the shoulders, in front)
+    headDown: false,    // head dropped: face toward the floor instead of up and forward
     torso: 0.52, shoulderW: 0.4, vis: 0.95,
   }, o);
   const ank = 0.08, Z = p.dist;
@@ -27,8 +28,9 @@ export function figure(o = {}) {
   const R = -1, L = 1; // player's right at -X
   const P = new Array(33);
   const set = (i, X, Y, Zz) => { P[i] = [X + p.x, Y, Zz]; };
-  set(0, 0, sy + 0.22, sz - 0.08);
-  for (let i = 1; i <= 10; i++) set(i, (i <= 3 || i === 7 || i === 9 ? L : R) * 0.04, sy + 0.24, sz - 0.06);
+  const hy = p.headDown ? sy + 0.02 : sy + 0.22, hz = p.headDown ? sz - 0.2 : sz - 0.08;
+  set(0, 0, hy, hz);
+  for (let i = 1; i <= 10; i++) set(i, (i <= 3 || i === 7 || i === 9 ? L : R) * 0.04, hy + 0.02, hz + 0.02);
   set(11, L * p.shoulderW / 2, sy, sz); set(12, R * p.shoulderW / 2, sy, sz);
   set(13, L * p.elbowOut, sy - 0.26, sz - 0.12); set(14, R * p.elbowOut, sy - 0.26, sz - 0.12);
   const wy = p.handY == null ? sy - 0.2 : p.handY;

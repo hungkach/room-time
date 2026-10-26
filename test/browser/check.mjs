@@ -70,16 +70,22 @@ try {
     if (on) window.__sweep = setInterval(() => { window.__pose.x = Math.sin(performance.now() / 600) * 1.05; }, 50);
     else window.__pose.x = 0;
   }, on);
-  // follows the spoken cues on the status line until done() is true
-  const followCues = async (done, ms = 120000) => {
+  // follows the spoken cues on the status line until done() is true; with tallFirst, the square stance starts
+  // too tall and is fixed once the coaching says so
+  const coached = [];
+  const followCues = async (done, ms = 150000, tallFirst = false) => {
     const seen = new Set(), t0 = Date.now();
     while (Date.now() - t0 < ms && !(await done())) {
-      const m = (await page.textContent('#labStatus')).match(/Calibrate: (.*)/);
+      const st = await page.textContent('#labStatus');
+      const m = st.match(/Calibrate: (.*)/);
       if (m && !seen.has(m[1])) {
         seen.add(m[1]);
         if (m[1] === 'Floor') { await pose(POSE['Square stance']); await sweep(true); }
+        else if (m[1] === 'Square stance' && tallFirst) { await sweep(false); await pose({ ...POSE['Square stance'], hip: 0.8 }); }
         else if (POSE[m[1]]) { await sweep(false); await pose(POSE[m[1]]); }
       }
+      const fix = st.match(/^Square stance: (.*)/);
+      if (fix && !coached.includes(fix[1])) { coached.push(fix[1]); await pose(POSE['Square stance']); }
       await page.waitForTimeout(150);
     }
     await sweep(false);
@@ -88,11 +94,13 @@ try {
 
   // calibration, posed per cue
   await page.click('#calBtn');
-  const cues = await followCues(async () => await page.textContent('#calBtn') === 'Calibrate');
+  const cues = await followCues(async () => await page.textContent('#calBtn') === 'Calibrate', 150000, true);
+  check(coached[0] === 'Sink your hips. Bend your knees.', 'stance coaching: a tall stance hears "' + coached.join('", "') + '"');
   const cal = await page.evaluate(() => RoomTimeLab.L.cal);
   check(cal && ['stand', 'square', 'stagger', 'floor'].every((k) => cal[k]), 'calibrated: three holds and the floor from the shuffle (' + cues.join(', ') + ')');
   check(Math.abs(cal.floor.width - 2.0) < 0.15, `the shuffle measured the floor in meters: ${cal.floor.width.toFixed(2)} m (moved 2.1 m)`);
   check(Math.abs(cal.square.D - 2.0) < 0.1, `distance from the iPad: ${cal.square.D.toFixed(2)} m (stood at 2.0)`);
+  check(!(cal.square.form || []).length, 'the square stance was held once fixed: no form notes');
 
   // live readouts
   const live = async (p) => { await pose(p); await page.waitForTimeout(800); return page.evaluate(() => RoomTimeLab.L.cur.r); };
@@ -140,6 +148,9 @@ try {
   await camState({ ...POSE['Square stance'], dist: 2.0 });
   c = await camState({ hip: 0.42, footW: 0.55, lean: 0.6, dist: 1.5 }, 1200);
   check(c.moves === 'shot', 'camera play: a drop stepping in is a shot: ' + c.moves);
+  await camState({ ...POSE['Square stance'], dist: 2.0 }, 1500);
+  c = await camState({ ...POSE['Square stance'], hip: 0.58, lean: 0.5, dist: 2.1, handY: 0.33 }, 1200);
+  check(c.moves === 'shot,down_block', 'camera play: hands to the knees with the hips back is a down block: ' + c.moves);
   await page.click('#endBtn'); await page.waitForTimeout(300);
   check(await page.evaluate(() => RoomTimeLab.L.src) === null, 'leaving camera play stops the camera');
 } finally {

@@ -79,7 +79,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 .padTxt{position:absolute;left:10px;font-size:.72rem;color:var(--muted);pointer-events:none}
 .padTxt.t{top:8px} .padTxt.b{bottom:8px}
 .padHint{position:absolute;left:10px;right:10px;bottom:26px;font-size:.78rem;line-height:1.3;color:var(--ink);opacity:.8;pointer-events:none}
-#btns{display:grid;grid-template-rows:1.35fr 1fr 1fr;gap:8px}
+#btns{display:grid;grid-template-rows:1.35fr 1fr 1fr 1fr;gap:8px}
 .move{border-radius:14px;border:1px solid var(--edge);background:var(--panel-2);font-family:var(--f-display);font-weight:700;font-size:1.45rem;touch-action:none;transition:transform .06s,filter .06s}
 #bSprawl{background:var(--red);border-color:var(--red);color:var(--on-red)}
 .move.hit{transform:scale(.96);filter:brightness(1.25)}
@@ -116,7 +116,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 #game.cam #pip{display:block}
 #game.cam #pad{display:none}
 #game.cam #deck{height:64px;grid-template-columns:1fr}
-#game.cam #btns{grid-template-rows:none;grid-template-columns:repeat(3,1fr)}
+#game.cam #btns{grid-template-rows:none;grid-template-columns:repeat(4,1fr)}
 
 /* camera check (Phase 0) */
 .actions.one{grid-template-columns:1fr}
@@ -208,6 +208,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
+      <div><b>Block:</b> a down block, hands to his head and shoulders, hips back, feet planted. It stops a shot from range for little effort; a deep shot runs through it and needs the sprawl.</div>
       <div><b>Sprawl, shot, snap:</b> your big moves. Each round, the coach calls them and the drill partner shows the look.</div>
       <div><b>Live go reads:</b></div>
       <div class="reads">
@@ -243,6 +244,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       <div id="btns">
         <button class="move" id="bSprawl">Sprawl</button>
         <button class="move" id="bShot">Shot</button>
+        <button class="move" id="bBlock">Block</button>
         <button class="move" id="bSnap">Snap</button>
       </div>
     </div>
@@ -275,7 +277,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         </div>
         <select class="lsel" id="labCam" hidden aria-label="Camera"></select>
         <div class="lcard"><h3>Live</h3>
-          <div id="liveMove" class="verdict">Moves: shoot, sprawl or snap to test them.</div>
+          <div id="liveMove" class="verdict">Moves: shoot, sprawl, down block or snap to test them.</div>
           <div class="seg c3" id="liveSrc"><button data-v="world">World<small>hip height</small></button><button data-v="imgS">Image ÷ S<small>hip height</small></button><button data-v="img">Image<small>hip height</small></button></div>
           <div id="liveOut">Start the camera.</div></div>
         <div class="lcard"><h3>Calibration</h3><div id="calOut"></div>
@@ -340,6 +342,8 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       footW: Math.abs(rA.x - lA.x),    // ankle to ankle, across
       elbowL: (sM.x - lE.x)*dir,       // each elbow out from the shoulder midpoint
       elbowR: (rE.x - sM.x)*dir,
+      noseUp: sM.y - nose.y,           // nose above the shoulder line (head up)
+      ankleDy: Math.abs(lA.y - rA.y),  // one ankle lower in the picture than the other: a foot nearer the camera
       dir
     };
   }
@@ -349,6 +353,11 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     if (!lm) return null;
     const vis = Math.min(...KEY.map(i => P(lm[i]).v));
     const m = {img:space(lm, aspect), world:wl ? space(wl, 1) : null, hipX:mid(P(lm[23]), P(lm[24])).x, vis, aspect};
+    if (wl) {
+      // the torso's angle from vertical in 3D, toward or away from the camera (degrees)
+      const w = i => P(wl[i]), dy = (w(23).y + w(24).y - w(11).y - w(12).y)/2, dz = (w(23).z + w(24).z - w(11).z - w(12).z)/2;
+      m.torsoLean = Math.atan2(Math.abs(dz), Math.abs(dy))*180/Math.PI;
+    }
     // Meters per picture height at the hips: the shoulders' and hips' side-to-side span in meters (world landmarks)
     // over the same span in the picture. Both shrink together when the body turns, so turning doesn't change it.
     // Leaning in puts the shoulders nearer the camera than the hips, so their picture span is scaled back to the
@@ -515,13 +524,15 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     }
   };
 
-  // Shot, sprawl and snap from the camera, in the player's own level units.
-  //   shot:   a fast level drop while closing in (hip width grows on screen as you step in)
-  //   sprawl: a bigger, deeper drop with the hips going back (hip width holds or shrinks)
-  //   snap:   hands come down fast from tie height to the belt while the level holds
+  // Shot, sprawl, down block and snap from the camera, in the player's own level units.
+  //   shot:       a fast level drop while closing in (hip width grows on screen as you step in)
+  //   sprawl:     a bigger, deeper drop with the hips going back (hip width holds or shrinks)
+  //   down block: hands from your stance down to knee level, a small drop, hips not coming in, feet where they were
+  //   snap:       hands come down fast from tie height to the belt while the level holds
   // A drop is judged once the level has stopped falling for settleMs. Pure: feed it frames, it returns moves.
   RT.MOVES = {windowMs:1200, maxDropMs:650, settleMs:90, minDrop:0.2, shotGrow:0.07, sprawlLevel:0.24, sprawlDrop:0.26,
-    snapFrom:0.6, snapTo:0.25, snapMs:500, snapHold:0.15, refractoryMs:900};
+    blockDrop:0.04, blockHands:-0.3, blockFrom:0.1, blockGrow:0.03,
+    snapFrom:0.75, snapTo:0.25, snapMs:500, snapHold:0.15, refractoryMs:900};
   RT.MoveDetector = class {
     constructor(opts){ this.o = Object.assign({}, RT.MOVES, opts || {}); this.h = []; this.last = -1e9; }
     // s: {t: ms, level, hipW, wristH}; returns {type, from, to, ms, grow} or null
@@ -534,11 +545,14 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       let lo = h[0]; for (const x of h) if (x.level < lo.level - 0.005) lo = x;   // the first time it got this low
       let top = lo; for (const x of h) { if (x.t >= lo.t) break; if (x.level > top.level) top = x; }
       const drop = top.level - lo.level, ms = lo.t - top.t;
-      if (drop >= o.minDrop && ms <= o.maxDropMs && s.t - lo.t >= o.settleMs) {
+      if (ms <= o.maxDropMs && s.t - lo.t >= o.settleMs) {
         const grow = num(lo.hipW) && num(top.hipW) && top.hipW > 0 ? lo.hipW/top.hipW - 1 : 0;
+        // hands that were up in your stance (any frame since the drop began) and are at your knees now
+        const handsWereUp = h.some(x => x.t >= top.t - 200 && num(x.wristH) && x.wristH >= o.blockFrom);
         let type = null;
-        if (grow >= o.shotGrow) type = 'shot';
-        else if (lo.level <= o.sprawlLevel && drop >= o.sprawlDrop && grow <= 0.02) type = 'sprawl';
+        if (drop >= o.minDrop && grow >= o.shotGrow) type = 'shot';
+        else if (drop >= o.sprawlDrop && lo.level <= o.sprawlLevel && grow <= 0.02) type = 'sprawl';
+        else if (drop >= o.blockDrop && grow <= o.blockGrow && num(s.wristH) && s.wristH <= o.blockHands && handsWereUp) type = 'down_block';
         if (type) return this.fire(s, {type, from:top.level, to:lo.level, ms, grow});
       }
       // snap: hands from tie height to the belt, fast, level held
@@ -549,6 +563,42 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     }
     fire(s, ev){ this.last = s.t; this.h = [s]; return ev; }
   };
+  // Stance form, the points a coach checks and the camera can see, in the order you'd fix them. Each is
+  // {key, ok, say}; say is the cue for when it's off. kind: 'square' or 'stagger'. Thresholds are broad on
+  // purpose: they catch a stance that's clearly off, not a style.
+  //   feet:   a little wider than the shoulders (square), one foot ahead of the other (staggered)
+  //   hips:   down, against your own standing hips (the tall-stance check), but not sitting
+  //   chest:  over the knees, not upright and not folded over
+  //   head:   up, eyes forward
+  //   elbows: in, inside the shoulder line
+  //   hands:  up in front, between the belt and the chest
+  RT.FORM = {feetMin:1.1, feetMax:2.3, staggerMin:0.15, tallHips:0.75, lowHips:0.42, leanMin:15, leanMax:65, headUp:0.2, elbowMax:1.15, handsLo:-0.1, handsHi:1.1};
+  RT.stanceCheck = function(m, cal, kind){
+    const F = RT.FORM, out = [], st = cal && cal.stand;
+    if (!m || !st) return out;
+    const add = (key, ok, say) => out.push({key, ok:!!ok, say});
+    const feet = m.world ? m.world.footW/m.world.S : m.img.footW/m.img.S;
+    if (kind === 'stagger') add('feet', m.img.ankleDy/m.img.S >= F.staggerMin, 'Step your lead foot forward, about heel to toe.');
+    else if (feet < F.feetMin) add('feet', false, 'Feet a little wider than your shoulders.');
+    else add('feet', feet <= F.feetMax, 'Feet in a little.');
+    const r = RT.hipRatios(m, st), hips = r.world != null ? r.world : r.imgS;
+    if (hips > F.tallHips) add('hips', false, 'Sink your hips. Bend your knees.');
+    else add('hips', hips >= F.lowHips, 'Up a little. Stay in your legs.');
+    // torso lean, two ways, keeping the larger: the torso's 3D angle from the world landmarks (MediaPipe tends to
+    // flatten depth, which reads shallow) and its height in the picture against standing (leaning in brings the
+    // shoulders nearer, which also reads shallow)
+    const tNow = num(m.k) && num(st.k) ? m.img.T*m.k : m.img.T/m.img.S, tSt = num(m.k) && num(st.k) ? st.img.T*st.k : st.img.T/st.img.S;
+    const leanImg = Math.acos(Math.max(-1, Math.min(1, tNow/tSt)))*180/Math.PI;
+    const lean = Math.max(leanImg, num(m.torsoLean) ? m.torsoLean : 0);
+    if (lean < F.leanMin) add('chest', false, 'Chest over your knees.');
+    else add('chest', lean <= F.leanMax, 'Chest up. Back flat.');
+    add('head', m.img.noseUp/m.img.S >= F.headUp, 'Head up, eyes forward.');
+    add('elbows', m.img.elbowL/(m.img.S/2) <= F.elbowMax && m.img.elbowR/(m.img.S/2) <= F.elbowMax, 'Elbows in.');
+    if (m.img.wristH > F.handsHi) add('hands', false, 'Hands down to your chest.');
+    else add('hands', m.img.wristH >= F.handsLo, 'Hands up in front.');
+    return out;
+  };
+
   // The detector's inputs from one frame's measures and readouts.
   RT.moveInput = (t, m, r) => m && r && num(r.level) ? {t, level:r.level, hipW:m.img.hipW, wristH:m.img.wristH} : null;
 
@@ -599,7 +649,7 @@ const PHASE = {warm:{name:'Warm-in',c:'p-warm'}, tech:{name:'Technique',c:'blue'
 const SINGLE = {
   left:{label:'Circle left',say:'Circle left'}, right:{label:'Circle right',say:'Circle right'},
   level:{label:'Level change',say:'Level'}, sprawl:{label:'Sprawl',say:'Sprawl'},
-  shot:{label:'Shot',say:'Shot'}, snap:{label:'Snap',say:'Snap'}
+  shot:{label:'Shot',say:'Shot'}, snap:{label:'Snap',say:'Snap'}, block:{label:'Down block',say:'Block'}
 };
 const CHAINS = [
   {label:'Sprawl, re-shot', seq:['sprawl','shot'], say:'Sprawl, re-shot'},
@@ -853,6 +903,7 @@ function liveUpdate(dt){
     case 'hand': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
     case 'tell': if (o.t > o.dur) { if (o.fake) setOpp('fakeBack', 0.5); else setOpp('shoot', 0.36); } break;
     case 'fakeBack': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
+    case 'blocked': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
     case 'shoot': if (o.t > o.dur + 0.12) { score('opp', 2, 'Takedown', 'opponent +2'); setOpp('reset', 1.5); } break;
     case 'opening': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
     case 'stuffed': case 'snapped': if (o.t > o.dur) { callout('Reset', 'no go-behind', 'info'); setOpp('reset', 1.2); } break;
@@ -881,6 +932,17 @@ function liveInput(type){
       callout('Bit on the fake', 'he re-shoots', 'miss'); sfx.miss(); S.bandEMA = Math.max(0, S.bandEMA - 0.15);
       setOpp('tell', 0.32, {fake:false, quick:true});
     } else { callout('Nothing there', '', 'info'); }
+  } else if (type === 'block') {
+    // a down block stops his shot while it's still from range (the tell, or the first moment of the shot);
+    // once he's in deep it gets run through and only the sprawl works
+    if ((o.state === 'tell' && !o.fake) || (o.state === 'shoot' && o.t <= 0.12)) {
+      const rt = S.time - o.tellT; S.R.reactions.push(rt);
+      sfx.thud(); callout('Blocked', ms(rt), 'good'); setOpp('blocked', 0.7);
+    } else if (o.state === 'shoot') { score('opp', 2, 'Ran through the block', 'in deep: sprawl · opponent +2'); setOpp('reset', 1.5); }
+    else if ((o.state === 'tell' && o.fake) || o.state === 'fakeBack') {
+      callout('Bit on the fake', 'he re-shoots', 'miss'); sfx.miss(); S.bandEMA = Math.max(0, S.bandEMA - 0.1);
+      setOpp('tell', 0.32, {fake:false, quick:true});
+    } else callout('Nothing there', '', 'info');
   } else if (type === 'shot') {
     if (o.state === 'opening') {
       const rt = S.time - o.t0; S.R.reactions.push(rt);
@@ -908,7 +970,7 @@ function pickCue(){
   if (capHit && !S.capSaid) { S.capSaid = true; coach('Explosive cap reached. Level changes and motion only.'); }
   let pool = null;
   if (rd.phase === 'warm') pool = ['left','right','level','left','right'];
-  else if (rd.phase === 'tech') pool = rd.k === 0 ? ['left','right','level','sprawl','sprawl'] : ['left','right','level','sprawl','sprawl','shot','snap'];
+  else if (rd.phase === 'tech') pool = rd.k === 0 ? ['left','right','level','sprawl','sprawl','block'] : ['left','right','level','sprawl','sprawl','block','shot','snap'];
   if (pool) {
     if (capHit) pool = pool.filter(x => x !== 'sprawl' && x !== 'shot');
     let t = pick(pool); if (t === S.lastCue && Math.random() < 0.6) t = pick(pool);
@@ -917,7 +979,7 @@ function pickCue(){
   }
   let chains = capHit ? CHAINS.filter(c => !c.seq.includes('sprawl') && !c.seq.includes('shot')) : CHAINS;
   if (chains.length && Math.random() < 0.7) return pick(chains);
-  const t = homeward(pick(capHit ? ['left','right','level','snap'] : ['sprawl','shot','snap','left','right']));
+  const t = homeward(pick(capHit ? ['left','right','level','snap','block'] : ['sprawl','block','shot','snap','left','right']));
   return {label:SINGLE[t].label, say:SINGLE[t].say, seq:[t]};
 }
 // the coach calls the direction that brings you back toward center most of the time
@@ -929,6 +991,7 @@ function homeward(t){
 }
 function partnerFor(step){
   if (step === 'sprawl') setOpp('shoot', 0.45);
+  else if (step === 'block') setOpp('tell', 0.6, {fake:false});   // a shot look from range
   else if (step === 'shot') setOpp('opening', cueWindow());
   else if (step === 'snap') setOpp('hand', cueWindow());
   else if (step === 'level') setOpp('dip', 0.6);
@@ -970,7 +1033,7 @@ function drillInput(type){
       c.stepT = S.time; c.deadline = S.time + cueWindow()*0.9; partnerFor(c.seq[c.step]); sfx.blip();
       callout(SINGLE[c.seq[c.step]] ? SINGLE[c.seq[c.step]].label : 'Go behind', 'then', 'cue');
     }
-  } else if (['sprawl','shot','snap'].includes(type)) {
+  } else if (['sprawl','shot','snap','block'].includes(type)) {
     missCue('Wrong move');
   }
 }
@@ -981,19 +1044,19 @@ function emit(type){
   if (type === 'left' || type === 'right') S.lastMoveT = S.time;
   if (S.plan[S.r].phase === 'live') liveInput(type); else drillInput(type);
 }
-const ACT = {sprawl:{dur:0.38}, shot:{dur:0.46}, snap:{dur:0.26}};
+const ACT = {sprawl:{dur:0.38}, shot:{dur:0.46}, snap:{dur:0.26}, block:{dur:0.3}};
 // pre: the level before the move (a camera move is read after the drop, so it brings its own)
 function act(type, pre){
   if (!S || S.mode !== 'work' || S.paused) return;
   if (S.action && S.time - S.action.t0 < S.action.dur) return;
   S.preLevel = pre == null ? S.level : pre;
   S.action = {type, t0:S.time, dur:ACT[type].dur};
-  if (type !== 'snap') S.explosive++;
-  const btn = {sprawl:'bSprawl', shot:'bShot', snap:'bSnap'}[type];
+  if (type === 'sprawl' || type === 'shot') S.explosive++;   // blocks and snaps don't count against the cap
+  const btn = {sprawl:'bSprawl', shot:'bShot', snap:'bSnap', block:'bBlock'}[type];
   const el = $(btn); el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 120);
   emit(type);
 }
-['Sprawl','Shot','Snap'].forEach(n => {
+['Sprawl','Shot','Snap','Block'].forEach(n => {
   $('b'+n).addEventListener('pointerdown', e => { e.preventDefault(); if (S && !S.auto) act(n.toLowerCase()); });
 });
 const pad = $('pad'); let padStartX = 0, padPointer = null;
@@ -1021,7 +1084,7 @@ const keys = {};
 window.addEventListener('keydown', e => {
   if (!S || S.auto || e.repeat) return;
   keys[e.key] = true;
-  if (e.key === 'j') act('sprawl'); else if (e.key === 'k') act('shot'); else if (e.key === 'l') act('snap');
+  if (e.key === 'j') act('sprawl'); else if (e.key === 'k') act('shot'); else if (e.key === 'l') act('snap'); else if (e.key === 'h') act('block');
   else if (e.key === 'f' && S.padActive) { S.bot.dipUntil = S.time + 0.35; }
   keyPad();
 });
@@ -1062,6 +1125,7 @@ function botReactCue(c){
       if (step === 'left' || step === 'right') botMove(step === 'left' ? -1 : 1);
       else if (step === 'move') botMove(homeDir());
       else if (step === 'level') S.bot.dipUntil = S.time + 0.35;
+      else if (step === 'block') act('block');
       else act(step);
     });
     if (step === 'sprawl' || step === 'shot') t += ACT[step].dur;
@@ -1070,7 +1134,7 @@ function botReactCue(c){
 function botReactOpp(state, o){
   const rt = rand(0.26, 0.5) + botFatigue()*0.8;
   const lockLeft = S.action ? Math.max(0, S.action.t0 + S.action.dur - S.time) + 0.05 : 0;
-  if (state === 'tell' && !o.fake) { if (Math.random() < (o.quick ? 0.6 : 0.88)) botAt(Math.max(rt*(o.quick ? 0.7 : 1), lockLeft), () => act('sprawl')); }
+  if (state === 'tell' && !o.fake) { if (Math.random() < (o.quick ? 0.6 : 0.88)) { const mv = !o.quick && Math.random() < 0.35 ? 'block' : 'sprawl'; botAt(Math.max(rt*(o.quick ? 0.7 : 1), lockLeft), () => act(mv)); } }
   else if (state === 'tell' && o.fake) { if (Math.random() < 0.3) botAt(rt, () => act('sprawl')); }
   else if (state === 'opening') { if (Math.random() < 0.7) botAt(rand(0.3, 0.6), () => act('shot')); }
   else if (state === 'hand') { if (Math.random() < 0.5) botAt(rand(0.3, 0.7), () => act('snap')); }
@@ -1101,7 +1165,7 @@ function updateBody(dt){
   }
   let target = S.padActive ? S.padTarget : 1.0;
   if (S.time < S.bot.dipUntil) target = Math.max(0.08, target - 0.24);
-  if (S.action && !S.cam) { if (S.action.type === 'sprawl') target = 0.1; else if (S.action.type === 'shot') target = 0.18; }
+  if (S.action && !S.cam) { if (S.action.type === 'sprawl') target = 0.1; else if (S.action.type === 'shot') target = 0.18; else if (S.action.type === 'block') target = Math.min(target, 0.34); }
   let rate = S.action ? 16 : (S.padActive ? 13 : 4);
   const C = S.cam;
   if (C) {
@@ -1178,6 +1242,7 @@ function poseTarget(o){
     case 'shoot': { const k = ease(o.t/Math.max(o.dur, 0.01)); return {crouch:1, lean:0.95, arms:0, reach:0.7, head:0.2, scale:1 + 0.85*k, dy:0.55*k}; }
     case 'opening': return {...base, crouch:0.1, lean:0.1, arms:0.3, reach:1};
     case 'stuffed': return {crouch:1, lean:1.32, arms:0, reach:0.4, head:0.6, scale:1.35, dy:0.28};
+    case 'blocked': return {...base, crouch:0.8, lean:0.75, arms:0.15, scale:1.08, dy:0.05};
     case 'snapped': return {crouch:0.85, lean:1.05, arms:0.2, reach:0, head:1, scale:1.2, dy:0.12};
     default: return base;
   }
@@ -1190,7 +1255,7 @@ function cueGlow(){
     if (o.state === 'opening') return 'green';
     if (o.state === 'hand') return 'amber';
     if (o.state === 'press') return 'zone';
-  } else if (!live && S.cue) return {sprawl:'red', shot:'green', snap:'amber'}[S.cue.seq[S.cue.step]] || null;
+  } else if (!live && S.cue) return {sprawl:'red', block:'red', shot:'green', snap:'amber'}[S.cue.seq[S.cue.step]] || null;
   return null;
 }
 function line(a, b, w, c){ ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); }
@@ -1452,7 +1517,7 @@ function buildDebrief(){
 
 // read-only view of the game for the 3D layer and camera play
 globalThis.RoomTimeGame = {get S(){ return S; }, cueGlow:() => S ? cueGlow() : null, BAND, ACT,
-  start:startSession, camMove:(type, pre) => act(type, pre), onQuit:null,
+  start:startSession, camMove:(type, pre) => act(type === 'down_block' ? 'block' : type, pre), onQuit:null,
   begin:() => { if (S && S.mode === 'calib') startRound(); }};
 
 /* ---------- loop ---------- */
@@ -1888,11 +1953,14 @@ L.closers.push(() => { cancelled.bench = cancelled.soak = true; });
 // In camera play the warm-in's circling can still widen it.
 const POSE_INFO = {
   stand:   {name:'Standing', say:'Stand tall, feet under your hips. Hold.'},
-  square:  {name:'Square stance', say:'Square stance. Hold.'},
-  stagger: {name:'Staggered stance', say:'Staggered stance, your normal lead. Hold.'},
+  square:  {name:'Square stance', say:'Square stance. Feet a little wider than your shoulders, knees bent, hips down, chest over your knees, head up, elbows in, hands in front.'},
+  stagger: {name:'Staggered stance', say:'Staggered stance, your normal lead. Lead foot forward about heel to toe, same level, same hands.'},
   sweep:   {name:'Floor', say:'Now shuffle side to side in your stance, out to the edges of the picture or your walls.'}
 };
 const HOLD_MS = 3000, MIN_FRAMES = 5, FRAME_WAIT_MS = 20000, SWEEP_MS = FAST ? 4000 : 12000;
+// stance coaching before each stance hold: up to COACH_MS of one spoken fix at a time (RT.stanceCheck), then hold
+const COACH_MS = FAST ? 4000 : 15000, CUE_GAP_MS = 3500, SETTLE_OK_MS = 600;
+const formNotes = {};   // per stance, the points still off when the hold began
 // the calibration's progress, on the Camera check status line and on the game screen in camera play
 function note(text){
   status(text);
@@ -1934,8 +2002,11 @@ async function capturePose(pose){
     if (now() - hintAt > 4000) { hintAt = now(); const h = !L.cur || !L.cur.lm ? 'Step into view' : L.cur.fc.hint; if (h) say(h); }
     if (!await wait(200, 'cal')) return null;
   }
+  if (pose === 'square' || pose === 'stagger') formNotes[pose] = await coachStance(pose, good);
+  if (cancelled.cal || !L.src) return null;
   const got = []; let seen = 0;
   const fn = f => { seen++; if (good(f)) got.push(f.m); };
+  if (pose === 'square' || pose === 'stagger') say('Hold.');
   beep(660, 0.1); L.on.add(fn);
   const ok = await wait(HOLD_MS, 'cal');
   L.on.delete(fn);
@@ -1946,17 +2017,33 @@ async function capturePose(pose){
   return got;
 }
 
+// One fix at a time, in the order a coach would fix them, until the stance holds for SETTLE_OK_MS or COACH_MS runs out.
+// Returns the points still off (the hold goes ahead either way; the calibration notes them).
+async function coachStance(pose, good){
+  const t0 = now(); let cueAt = now() - CUE_GAP_MS + 1200, okSince = null, faults = [];
+  while (now() - t0 < COACH_MS) {
+    const f = L.cur;
+    faults = good(f) && cal && cal.stand ? RT.stanceCheck(f.m, cal, pose).filter(x => !x.ok) : faults;
+    if (!faults.length && good(f)) { if (okSince == null) okSince = now(); if (now() - okSince >= SETTLE_OK_MS) break; }
+    else okSince = null;
+    if (faults.length && now() - cueAt >= CUE_GAP_MS) { cueAt = now(); say(faults[0].say); note(`${POSE_INFO[pose].name}: ${faults[0].say}`); }
+    if (!await wait(150, 'cal')) break;
+  }
+  return faults.map(x => x.key);
+}
+
 async function calibrate(poses){
   if (busy === 'cal') { cancelled.cal = true; return; }
   if (!claim('cal')) return;
   const btn = $('calBtn'); btn.textContent = 'Stop'; btn.classList.add('on');
   // poses not redone keep their saved medians, and the walls stay unless swept again
   const oldFloor = cal && cal.floor ? cal.floor : null, caps = {};
+  const oldForm = {square:cal && cal.square && cal.square.form, stagger:cal && cal.stagger && cal.stagger.form};
   for (const p of RT.POSES) caps[p] = cal && cal[p] ? [cal[p]] : [];
   let got = 0;
   for (const p of poses) {
-    // the sweep needs a standing capture to know left from right
-    if (p === 'sweep' && caps.stand.length && (!cal || cal.stand !== caps.stand[0])) setCal(caps);
+    // the stance coaching and the sweep measure against the standing capture, so keep the calibration current
+    if (p !== 'stand' && caps.stand.length) setCal(caps);
     const g = await capturePose(p);
     if (cancelled.cal || !L.src) break;
     if (g) { caps[p] = g; got++; }
@@ -1964,6 +2051,8 @@ async function calibrate(poses){
   if (got && caps.stand.length) {
     setCal(caps);
     if (!caps.sweep && oldFloor) cal.floor = oldFloor;
+    for (const k of ['square', 'stagger']) if (cal[k] && formNotes[k] && poses.includes(k)) cal[k].form = formNotes[k];
+    for (const k of ['square', 'stagger']) if (cal[k] && !poses.includes(k) && oldForm[k]) cal[k].form = oldForm[k];
     L.cal = cal; store.set('cal', cal);
     // what the camera measured, in feet
     const ft = mm => Math.round(mm*3.281);
@@ -1979,14 +2068,15 @@ function setCal(caps){
   cal = RT.buildCal(caps, {at:new Date().toISOString(), aspect:f ? f.aspect : null, w:f ? f.w : null, h:f ? f.h : null, model:L.model, camera:L.cam ? L.cam.label : ''});
   L.cal = cal;
 }
+const formTxt = st => st && st.form && st.form.length ? ` · <b style="color:#e2a23b">check ${st.form.join(', ')}</b>` : '';
 function renderCal(){
   const c = cal, row = (pose, txt) => `<div><span>${POSE_INFO[pose].name}</span><span>${txt} <button class="redo" data-pose="${pose}" aria-label="Redo ${POSE_INFO[pose].name}">redo</button></span></div>`;
   const stance = s => s ? `level ${n(RT.levelFromRatio(s.ratios.world, c.square.ratios.world), 2)} · hips ${n(s.ratios.world*100)}% · feet ${n(s.footWorld, 1)} S` : '-';
   $('calOut').innerHTML = !c || !c.stand ? 'Standing, square stance and staggered stance, then shuffle side to side, wall to wall. About 40 seconds; the iPad talks you through it.' :
     `<div class="rows">` +
     row('stand', c.stand.world ? `hips ${n(c.stand.world.hipH, 2)} m · ${c.stand.D ? 'about ' + n(c.stand.D*3.281, 1) + ' ft away' : ''}` : `hips ${n(c.stand.img.hipH, 3)}`) +
-    row('square', c.square ? `hips ${n(c.square.ratios.world*100)}% · feet ${n(c.square.footWorld, 1)} S` : '-') +
-    row('stagger', c.stagger && c.square ? stance(c.stagger) : '-') +
+    row('square', c.square ? `hips ${n(c.square.ratios.world*100)}% · feet ${n(c.square.footWorld, 1)} S${formTxt(c.square)}` : '-') +
+    row('stagger', c.stagger && c.square ? stance(c.stagger) + formTxt(c.stagger) : '-') +
     row('sweep', c.floor ? `${n(c.floor.width*3.281, 1)} ft wall to wall (${n(c.floor.width, 2)} m)` : '-') +
     `</div><div>${(c.at || '').slice(0, 16).replace('T', ' ')} · ${c.w}x${c.h} · ${c.model}</div>` +
     (c.w && L.cur && (L.cur.w !== c.w || L.cur.h !== c.h) ? `<div class="verdict bad">The camera picture changed since; calibrate again.</div>` : '');
@@ -2064,7 +2154,7 @@ L.hudLines.push(f => f && f.r ? `level ${n(f.r.level, 2)} ${f.r.zone || ''}  fee
 L.hudLines.push(f => f && f.r && f.r.headRatio != null ? `head ${n(f.r.headRatio*100)}% of standing  out ${n(f.r.headX*100)} cm` : '');
 
 /* ---------- moves in the camera check ---------- */
-const MOVE_NAME = {shot:'Shot', sprawl:'Sprawl', snap:'Snap'};
+const MOVE_NAME = {shot:'Shot', sprawl:'Sprawl', snap:'Snap', down_block:'Down block'};
 let labDet = new RT.MoveDetector();
 L.on.add(f => {
   if (play.on) return;
@@ -2682,6 +2772,7 @@ function poseFor(o, t){
     case 'tell': return mix(POSES.stance, POSES.tell, ease(o.t/Math.max(o.dur, 0.01)));
     case 'dip': return mix(POSES.stance, POSES.tell, Math.sin(clamp(o.t/o.dur, 0, 1)*Math.PI));
     case 'shoot': return mix(POSES.tell, POSES.shoot, ease(o.t/Math.max(o.dur, 0.01)*1.3));
+    case 'blocked': return mix(POSES.tell, POSES.stance, ease(o.t/Math.max(o.dur, 0.01)));
     case 'opening': case 'hand': case 'press': case 'stuffed': case 'snapped': return POSES[o.state];
     default: return POSES.stance;
   }
@@ -2819,6 +2910,7 @@ function frame(ms){
     let hx = s*0.2, hy = -0.27, hz = -0.42;
     if (a) {
       if (a.type === 'shot') { hx = s*lerp(0.2, 0.16, ab); hy = lerp(-0.27, -0.2, ab); hz = lerp(-0.42, -0.85, ab); }
+      else if (a.type === 'block') { hx = s*lerp(0.2, 0.14, ab); hy = lerp(-0.27, -0.46, ab); hz = lerp(-0.42, -0.62, ab); }
       else if (a.type === 'sprawl') { hy = lerp(-0.27, -0.42, ab); hz = lerp(-0.42, -0.6, ab); }
       else if (a.type === 'snap') { hy = -0.27 + 0.12*Math.sin(ak*Math.PI) - 0.2*ease((ak - 0.4)/0.6); hz = lerp(-0.42, -0.6, Math.sin(ak*Math.PI)); }
     }
