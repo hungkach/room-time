@@ -109,6 +109,43 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   #deck{height:auto}
 }
 @media (prefers-reduced-motion:reduce){.move{transition:none}}
+
+/* camera check (Phase 0) */
+.actions.one{grid-template-columns:1fr}
+#lab{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;padding-block:8px 10px}
+#labTop{display:flex;align-items:center;gap:10px}
+#labTop h2{font-family:var(--f-display);font-weight:700;font-size:1.5rem;line-height:1;margin:0;flex:none}
+#labStatus{flex:1;min-width:0;font-size:.85rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#labMain{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:10px}
+#labStage{position:relative;min-height:0;border-radius:14px;overflow:hidden;background:#000;display:grid;place-items:center}
+#labView{position:relative;width:100%;height:100%}
+#labView.mirror{transform:scaleX(-1)}
+#labVideo,#labSkel{position:absolute;inset:0;width:100%;height:100%;display:block}
+#labVideo{object-fit:fill}
+#labMeter{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.lcard .redo{background:none;border:1px solid var(--edge);border-radius:6px;padding:1px 6px;margin-left:4px;font-size:.72rem;color:var(--muted)}
+#liveSrc button{font-size:1rem;padding:7px 2px}
+#labHud{position:absolute;left:8px;top:8px;font:12px/1.35 ui-monospace,Menlo,monospace;color:var(--ink);background:var(--shade);padding:6px 8px;border-radius:8px;white-space:pre;pointer-events:none}
+#labHint{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);font-family:var(--f-display);font-weight:700;font-size:1.8rem;line-height:1.1;background:var(--shade);padding:4px 14px;border-radius:10px;white-space:nowrap;pointer-events:none}
+#labEmpty{position:absolute;inset:0;display:grid;place-items:center;padding:20px;text-align:center;color:var(--muted);font-size:.95rem;line-height:1.5}
+#labSide{min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:4px}
+.lbtns{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.lbtns button,.lsel{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:10px 4px;font-family:var(--f-display);font-weight:600;font-size:1.1rem;line-height:1.1}
+.lbtns button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.lbtns button.go{background:var(--red);border-color:var(--red);color:var(--on-red)}
+.lbtns button:disabled{opacity:.4}
+.lbtns .span2{grid-column:1/-1}
+.lsel{width:100%;color:var(--ink);font-family:var(--f-body);font-weight:500;font-size:.85rem;padding:8px}
+.lcard{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:.86rem;line-height:1.4}
+.lcard h3{margin:0;font-size:.8rem;font-weight:500;color:var(--muted);letter-spacing:.02em}
+.lcard .rows{font-size:.86rem;gap:4px}
+.lcard .verdict{font-weight:600}
+.lcard .verdict.ok{color:var(--green)} .lcard .verdict.bad{color:var(--amber)}
+@media (orientation:portrait),(max-width:760px){
+  #lab{overflow-y:auto}
+  #labMain{grid-template-columns:1fr;grid-template-rows:minmax(260px,52vh) auto}
+  #labSide{overflow:visible}
+}
 </style>
 </head>
 <body>
@@ -159,6 +196,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       <button class="primary" id="startBtn">Start session</button>
       <button class="secondary" id="autoBtn">Watch auto-play</button>
     </div>
+    <div class="actions one"><button class="secondary" id="labBtn">Camera check</button></div>
 
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
@@ -201,10 +239,230 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       </div>
     </div>
   </section>
+
+  <section id="lab" hidden>
+    <div id="labTop">
+      <h2>Camera check</h2>
+      <div id="labStatus">Camera off</div>
+      <button class="ibtn" id="labBack" aria-label="Back to menu"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="labMain">
+      <div id="labStage">
+        <div id="labView"><video id="labVideo" playsinline muted></video><canvas id="labSkel"></canvas></div>
+        <div id="labEmpty">Prop the iPad in landscape at hip height, about 6 ft away, front camera facing you. Turn off Center Stage in Control Center. Then tap Start camera.</div>
+        <canvas id="labMeter" hidden></canvas>
+        <div id="labHud" hidden></div>
+        <div id="labHint" hidden></div>
+      </div>
+      <div id="labSide">
+        <div class="seg c3" id="labModel">
+          <button data-v="lite">Lite<small>fastest</small></button>
+          <button data-v="full">Full<small>default</small></button>
+          <button data-v="heavy">Heavy<small>slowest</small></button>
+        </div>
+        <div class="lbtns">
+          <button class="go span2" id="labStart">Start camera</button>
+          <button id="labDebug" class="on">Debug</button>
+          <button id="labStop" disabled>Stop</button>
+        </div>
+        <select class="lsel" id="labCam" hidden aria-label="Camera"></select>
+        <div class="lcard"><h3>Live</h3>
+          <div class="seg c3" id="liveSrc"><button data-v="world">World<small>hip height</small></button><button data-v="imgS">Image ÷ S<small>hip height</small></button><button data-v="img">Image<small>hip height</small></button></div>
+          <div id="liveOut">Start the camera.</div></div>
+        <div class="lcard"><h3>Calibration</h3><div id="calOut"></div>
+          <div class="lbtns"><button id="calBtn">Calibrate</button><button id="calSave" hidden>Save</button></div></div>
+        <div class="lcard"><h3>Recording</h3><div id="recOut">Camera video plus a landmark trace, up to 5 minutes. Load video runs a saved clip through the same tracker and makes a trace from it.</div>
+          <div class="lbtns"><button id="recBtn">Record</button><button id="fileBtn">Load video</button><button id="recVideo" hidden>Save video</button><button id="recTrace" hidden>Save trace</button></div>
+          <input type="file" id="fileIn" accept="video/*" hidden></div>
+        <div class="lcard"><h3>Model bench</h3><div id="benchOut"></div>
+          <div class="lbtns"><button id="benchBtn">Bench models</button><button id="benchSave" hidden>Save</button></div></div>
+        <div class="lcard"><h3>Thermal soak</h3><div id="soakOut"></div><canvas id="soakChart" style="width:100%;height:60px"></canvas>
+          <div class="lbtns"><button id="soakBtn">Thermal soak</button><button id="soakSave" hidden>Save</button></div></div>
+      </div>
+    </div>
+  </section>
 </div>
 
 <section id="debrief" hidden><div class="in" id="debriefIn"></div></section>
 
+<script id="rt-metrics">
+// Room Time metrics: pure functions over MediaPipe landmark lists, no DOM.
+// A landmark list is 33 points, each {x, y, z, visibility} or [x, y, z, visibility].
+// Image landmarks are 0 to 1 of the raw (unmirrored) frame; world landmarks are meters
+// from the hip midpoint. y grows down in both. Node tests run this block (test/helpers/load.mjs).
+(function (g) {
+  'use strict';
+  const RT = g.RoomTime = g.RoomTime || {};
+
+  RT.BAND = {lo:0.32, hi:0.58};   // the prototype's stance band, in level units (1 = standing tall)
+  RT.STANCE_LEVEL = 0.45;         // where the calibrated square stance sits on the level scale
+  RT.POSES = ['stand', 'square', 'stagger', 'wallL', 'wallR'];
+  const KEY = [0, 11, 12, 23, 24, 25, 26, 27, 28]; // nose, shoulders, hips, knees, ankles: must be in frame
+
+  const P = p => Array.isArray(p) ? {x:p[0], y:p[1], z:p[2], v:p[3] == null ? 1 : p[3]} : {x:p.x, y:p.y, z:p.z, v:p.visibility == null ? 1 : p.visibility};
+  const mid = (a, b) => ({x:(a.x + b.x)/2, y:(a.y + b.y)/2});
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const r4 = v => Math.round(v*1e4)/1e4;
+  const num = v => typeof v === 'number' && isFinite(v);
+  RT.pt = P;
+  RT.pack = list => list ? list.map(p => { const q = P(p); return [r4(q.x), r4(q.y), r4(q.z), r4(q.v)]; }) : null;
+
+  // One space with x scaled by sx so x and y share units (image: the frame's aspect, world: 1).
+  // dir is +1 when the player's right shows at larger x, so mirroring never flips left and right.
+  function space(list, sx){
+    const q = i => { const p = P(list[i]); return {x:p.x*sx, y:p.y}; };
+    const lS = q(11), rS = q(12), lE = q(13), rE = q(14), lH = q(23), rH = q(24), lA = q(27), rA = q(28);
+    const sM = mid(lS, rS), hM = mid(lH, rH), aM = mid(lA, rA);
+    const dir = Math.sign(rS.x - lS.x) || 1;
+    return {
+      S: dist(lS, rS),                 // shoulder width
+      T: dist(sM, hM),                 // torso length
+      hipH: aM.y - hM.y,               // hip midpoint above the ankle midpoint
+      footW: Math.abs(rA.x - lA.x),    // ankle to ankle, across
+      elbowL: (sM.x - lE.x)*dir,       // each elbow out from the shoulder midpoint
+      elbowR: (rE.x - sM.x)*dir,
+      dir
+    };
+  }
+
+  // Raw measures for one frame. lm: image landmarks, wl: world landmarks or null, aspect: width / height.
+  RT.measure = function(lm, wl, aspect){
+    if (!lm) return null;
+    const vis = Math.min(...KEY.map(i => P(lm[i]).v));
+    return {img:space(lm, aspect), world:wl ? space(wl, 1) : null, hipX:mid(P(lm[23]), P(lm[24])).x, vis};
+  };
+
+  // Hip height against standing, three ways, so Phase 0 can show which one holds up:
+  // img is raw image height (moves if you step closer), imgS is scaled by this frame's shoulder width,
+  // world is from MediaPipe's metric world landmarks.
+  RT.hipRatios = function(m, stand){
+    return {
+      img: m.img.hipH/stand.img.hipH,
+      imgS: (m.img.hipH/m.img.S)/(stand.img.hipH/stand.img.S),
+      world: m.world && stand.world ? m.world.hipH/stand.world.hipH : null
+    };
+  };
+
+  // Level on the prototype's scale: 1 at standing, STANCE_LEVEL at the calibrated square stance, linear between.
+  RT.levelFromRatio = function(ratio, squareRatio){
+    if (!num(ratio) || !num(squareRatio) || squareRatio > 0.97) return null;
+    return 1 - (1 - ratio)*(1 - RT.STANCE_LEVEL)/(1 - squareRatio);
+  };
+  RT.stanceZone = function(level){
+    if (!num(level)) return null;
+    if (level > RT.BAND.hi) return 'tall';
+    if (level < RT.BAND.lo) return 'deep';
+    return 'stance';
+  };
+
+  // Floor position from the hip's image x: -1 at the left wall capture, +1 at the right.
+  RT.floorX = function(hipX, cal){
+    if (!cal || !cal.wallL || !cal.wallR) return null;
+    const a = cal.wallL.hipX, b = cal.wallR.hipX;
+    if (Math.abs(b - a) < 0.05) return null;
+    return Math.max(-1.5, Math.min(1.5, -1 + 2*(hipX - a)/(b - a)));
+  };
+
+  // Live readouts against a calibration. src picks the hip height source: 'world', 'imgS' or 'img'.
+  RT.readouts = function(m, cal, src){
+    if (!m) return null;
+    const out = {
+      footS: m.img.footW/m.img.S,                                   // foot width in shoulder widths (this frame)
+      footWorld: m.world ? m.world.footW/m.world.S : null,
+      elbowL: m.img.elbowL/(m.img.S/2),                             // 1.0 = elbow on the shoulder line, under 1 is in
+      elbowR: m.img.elbowR/(m.img.S/2),
+      elbowLWorld: m.world ? m.world.elbowL/(m.world.S/2) : null,
+      elbowRWorld: m.world ? m.world.elbowR/(m.world.S/2) : null,
+      ratios: null, level: null, zone: null, floorX: null
+    };
+    if (!cal || !cal.stand) return out;
+    out.ratios = RT.hipRatios(m, cal.stand);
+    src = src || 'world';
+    if (out.ratios[src] == null) src = 'imgS';
+    out.src = src;
+    if (cal.square) out.level = RT.levelFromRatio(out.ratios[src], cal.square.ratios[src]);
+    out.zone = RT.stanceZone(out.level);
+    out.floorX = RT.floorX(m.hipX, cal);
+    return out;
+  };
+
+  RT.median = function(a){
+    const s = a.filter(num).sort((x, y) => x - y);
+    if (!s.length) return null;
+    const k = s.length >> 1;
+    return s.length % 2 ? s[k] : (s[k - 1] + s[k])/2;
+  };
+  // Median of every numeric field across a list of same-shaped objects.
+  RT.medianTree = function(list){
+    list = list.filter(Boolean);
+    if (!list.length) return null;
+    const out = {};
+    for (const k of Object.keys(list[0])) {
+      const v = list[0][k];
+      if (typeof v === 'number') out[k] = RT.median(list.map(o => o[k]));
+      else if (v && typeof v === 'object') out[k] = RT.medianTree(list.map(o => o[k]));
+      else out[k] = v;
+    }
+    return out;
+  };
+
+  // Calibration from the captured measures of each pose: {stand: [m...], square: [...], ...}.
+  RT.buildCal = function(caps, meta){
+    const cal = Object.assign({v:1, at:null}, meta || {});
+    for (const pose of RT.POSES) if (caps[pose] && caps[pose].length) cal[pose] = RT.medianTree(caps[pose]);
+    if (!cal.stand) return cal;
+    for (const pose of ['square', 'stagger']) {
+      const c = cal[pose]; if (!c) continue;
+      c.ratios = RT.hipRatios(c, cal.stand);
+      c.footS = c.img.footW/c.img.S;
+      c.footWorld = c.world ? c.world.footW/c.world.S : null;
+    }
+    return cal;
+  };
+
+  // Is the whole body in the picture? Hints never say left or right (the preview is mirrored).
+  RT.frameCheck = function(lm, margin, minVis){
+    margin = margin == null ? 0.02 : margin; minVis = minVis == null ? 0.5 : minVis;
+    if (!lm) return {ok:false, hint:'Step into view'};
+    const pts = KEY.map(i => P(lm[i]));
+    const seen = pts.filter(p => p.v >= minVis).length;
+    if (seen < 4) return {ok:false, hint:'Step into view'};
+    const top = Math.min(...pts.map(p => p.y)), bot = Math.max(...pts.map(p => p.y));
+    if (top < margin || bot > 1 - margin || pts.slice(7).some(p => p.v < minVis)) return {ok:false, hint:'Step back'};
+    if (pts.some(p => p.x < margin || p.x > 1 - margin)) return {ok:false, hint:'Move to the middle'};
+    if (seen < KEY.length) return {ok:false, hint:'Face the camera'};
+    if (bot - top < 0.15) return {ok:false, hint:'Step closer'}; // a deep stance at 8 ft fills only about 0.23
+    return {ok:true, hint:''};
+  };
+
+  // Timestamps for detectForVideo must strictly increase.
+  RT.nextTs = (last, now) => now > last ? now : last + 1;
+
+  RT.percentile = function(a, p){
+    const s = a.filter(num).sort((x, y) => x - y);
+    if (!s.length) return null;
+    return s[Math.min(s.length - 1, Math.max(0, Math.round(p*(s.length - 1))))];
+  };
+
+  // Thermal soak verdict from samples [{t: seconds, fps, inferMs}].
+  RT.soakVerdict = function(samples, minFps){
+    minFps = minFps || 24;
+    if (!samples.length) return null;
+    const end = samples[samples.length - 1].t;
+    const avg = a => a.length ? a.reduce((x, y) => x + y, 0)/a.length : null;
+    const first = avg(samples.filter(s => s.t <= 60).map(s => s.fps));
+    const last = avg(samples.filter(s => s.t >= end - 60).map(s => s.fps));
+    const ratio = first ? last/first : null;
+    return {first, last, ratio, minutes:end/60, pass: ratio != null && ratio >= 0.85 && last >= minFps};
+  };
+
+  // Mode of the model bench: keep inference on the main thread when it fits a 30 fps frame.
+  RT.benchVerdict = function(r){
+    if (!r) return null;
+    return r.p95 < 33 && r.detectFps >= 24 ? 'main thread is fine' : 'needs a worker';
+  };
+})(globalThis);
+</script>
 <script>
 (() => {
 const $ = id => document.getElementById(id);
@@ -1043,6 +1301,671 @@ function frame(ts){
 }
 requestAnimationFrame(frame);
 document.addEventListener('visibilitychange', () => { if (document.hidden && S && S.mode !== 'done') S.paused = true; });
+})();
+</script>
+<script id="rt-lab">
+// Camera check (Phase 0): camera, pose model, debug overlay. Runs beside the touch prototype and never touches it.
+// Camera opening adapted from body-arcade engine/pose-source.js at 12ef6b8 (openCamera front_wide, widestZoom).
+(() => {
+const RT = globalThis.RoomTime;
+const $ = id => document.getElementById(id);
+const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1';
+const MODEL_URL = n => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${n}/float16/1/pose_landmarker_${n}.task`;
+const BONES = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,29],[29,31],[27,31],[28,30],[30,32],[28,32]];
+const VIS_KEYS = [['N',0],['LS',11],['RS',12],['LE',13],['RE',14],['LW',15],['RW',16],['LH',23],['RH',24],['LK',25],['RK',26],['LA',27],['RA',28]];
+
+const video = $('labVideo'), skel = $('labSkel'), sctx = skel.getContext('2d');
+const L = {
+  vision:null, fileset:null, lmk:null, model:null, delegate:null, loading:false,
+  stream:null, cam:null, src:null, mirror:false, raf:0, lastTs:0, lastVT:-1,
+  det:[], camT:[], rafT:[], cur:null, debug:true, wake:null, on:new Set(),
+  camCount:0, gapMax:0, prevRaf:0   // running counters the bench and soak read and reset
+};
+try { L.model = localStorage.getItem('roomtime.model') || 'full'; } catch(e) { L.model = 'full'; }
+const want = { model: L.model };
+
+const status = t => { $('labStatus').textContent = t; };
+const now = () => performance.now();
+const stopStream = st => { if (st) st.getTracks().forEach(t => t.stop()); };
+const track = st => st && st.getVideoTracks()[0];
+
+/* ---------- audio: unlocks only inside a tap on iOS ---------- */
+let AC = null;
+function unlockAudio(){
+  try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch(e) {}
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch(e) {}
+}
+function say(text){
+  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1.1; u.pitch = 0.92; speechSynthesis.speak(u); } catch(e) {}
+}
+function beep(freq, dur){
+  if (!AC) return;
+  try { const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain(); o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.15, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(AC.destination); o.start(t); o.stop(t + dur + 0.02); } catch(e) {}
+}
+
+/* ---------- wake lock ---------- */
+async function lockScreen(){ try { if (navigator.wakeLock && !L.wake) { L.wake = await navigator.wakeLock.request('screen'); L.wake.addEventListener('release', () => { L.wake = null; }); } } catch(e) {} }
+function unlockScreen(){ try { L.wake && L.wake.release(); } catch(e) {} L.wake = null; }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && L.src) lockScreen(); });
+
+/* ---------- camera ---------- */
+// The front camera's whole 4:3 picture (a 16:9 request crops the ultra-wide's top and bottom),
+// zoomed all the way out where the browser allows. A front camera listed as ultra wide is preferred.
+async function openCamera(deviceId){
+  const md = navigator.mediaDevices;
+  const base = {width:{ideal:1920}, height:{ideal:1440}, aspectRatio:{ideal:4/3}, frameRate:{ideal:30}};
+  const get = v => md.getUserMedia({audio:false, video:Object.assign({}, base, v)});
+  let st = await get(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:'user'});
+  const cams = (await md.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  if (!deviceId) {
+    const uw = cams.find(d => /front/i.test(d.label) && /ultra ?wide/i.test(d.label));
+    if (uw && uw.label !== track(st).label) { try { const s2 = await get({deviceId:{exact:uw.deviceId}}); stopStream(st); st = s2; } catch(e) {} }
+  }
+  const tr = track(st);
+  let zoomMin = null;
+  try {
+    const caps = tr.getCapabilities ? tr.getCapabilities() : {};
+    const cur = tr.getSettings ? tr.getSettings().zoom : undefined;
+    if (caps.zoom) { zoomMin = caps.zoom.min; if (caps.zoom.min < (cur == null ? 1 : cur)) await tr.applyConstraints({advanced:[{zoom:caps.zoom.min}]}); }
+  } catch(e) {}
+  const set = tr.getSettings ? tr.getSettings() : {};
+  return {stream:st, cams, info:{label:tr.label || '', deviceId:set.deviceId || deviceId || '', facing:set.facingMode || '', width:set.width || null, height:set.height || null, zoom:set.zoom == null ? null : set.zoom, zoomMin, fps:set.frameRate || null}};
+}
+
+/* ---------- pose model ---------- */
+async function loadModel(name){
+  if (L.lmk && L.model === name) return;
+  L.loading = true; status('Loading ' + name + ' model');
+  try {
+    if (!L.vision) { L.vision = await import(MP + '/vision_bundle.mjs'); L.fileset = await L.vision.FilesetResolver.forVisionTasks(MP + '/wasm'); }
+    if (L.lmk) { try { L.lmk.close(); } catch(e) {} L.lmk = null; }
+    const opts = delegate => ({baseOptions:{modelAssetPath:MODEL_URL(name), delegate}, runningMode:'VIDEO', numPoses:1,
+      minPoseDetectionConfidence:0.5, minPosePresenceConfidence:0.5, minTrackingConfidence:0.5});
+    try { L.lmk = await L.vision.PoseLandmarker.createFromOptions(L.fileset, opts('GPU')); L.delegate = 'GPU'; }
+    catch(e) { L.lmk = await L.vision.PoseLandmarker.createFromOptions(L.fileset, opts('CPU')); L.delegate = 'CPU'; }
+    L.model = name; L.det = []; L.cur = null;
+    try { localStorage.setItem('roomtime.model', name); } catch(e) {}
+  } finally { L.loading = false; }
+}
+async function switchModel(name){
+  want.model = name; renderModel();
+  if (!L.vision && !L.src) { L.model = name; return; }
+  await loadModel(name);
+  status(statusLine());
+}
+function renderModel(){ $('labModel').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === want.model))); }
+
+/* ---------- start / stop ---------- */
+async function startCamera(deviceId){
+  stopSource();
+  $('labEmpty').hidden = true;
+  try {
+    if (!window.isSecureContext) throw new Error('The camera needs https.');
+    status('Starting camera');
+    const c = await openCamera(deviceId);
+    L.stream = c.stream; L.cam = c.info; L.src = 'camera';
+    L.mirror = /front|facetime/i.test(c.info.label) || c.info.facing === 'user' || !c.info.facing;
+    video.srcObject = L.stream; video.muted = true; video.playsInline = true;
+    await video.play();
+    fillCams(c.cams, c.info.deviceId);
+    await loadModel(want.model);
+    begin();
+  } catch(e) {
+    status('Camera error: ' + (e && e.message || e)); $('labEmpty').hidden = false; stopSource();
+  }
+}
+function begin(){
+  $('labView').classList.toggle('mirror', L.mirror);
+  $('labStop').disabled = false; $('labStart').textContent = 'Restart camera';
+  L.lastVT = -1; L.det = []; L.camT = []; L.rafT = []; L.prevRaf = 0;
+  fitView(); lockScreen(); watchFrames();
+  cancelAnimationFrame(L.raf); L.raf = requestAnimationFrame(tick);
+  status(statusLine());
+}
+function stopSource(){
+  cancelAnimationFrame(L.raf); L.raf = 0;
+  stopStream(L.stream); L.stream = null;
+  try { video.pause(); } catch(e) {}
+  video.srcObject = null;
+  if (L.fileUrl) { video.removeAttribute('src'); video.load(); URL.revokeObjectURL(L.fileUrl); L.fileUrl = null; }
+  L.src = null; L.cur = null;
+  $('labStop').disabled = true; $('labStart').textContent = 'Start camera';
+  $('labHud').hidden = true; $('labHint').hidden = true;
+  sctx.clearRect(0, 0, skel.width, skel.height);
+  unlockScreen();
+}
+function fillCams(cams, id){
+  const sel = $('labCam');
+  sel.innerHTML = cams.map((c, i) => `<option value="${c.deviceId}">${c.label || 'Camera ' + (i + 1)}</option>`).join('');
+  sel.value = id; sel.hidden = cams.length < 2;
+}
+function statusLine(){
+  if (!L.src) return 'Camera off';
+  const c = L.cam;
+  const cam = L.src === 'file' ? 'video file' : `${c.label || 'camera'} ${c.width}x${c.height}` + (c.zoom != null ? ` zoom ${(+c.zoom).toFixed(2)}` + (c.zoomMin != null ? ` (min ${(+c.zoomMin).toFixed(2)})` : '') : ' no zoom control');
+  return `${cam} · ${L.model} ${L.delegate || ''}`;
+}
+
+// counts real camera frames where the browser can (requestVideoFrameCallback)
+function watchFrames(){
+  if (!video.requestVideoFrameCallback) return;
+  const cb = () => { if (!L.src) return; L.camCount++; pushWin(L.camT, now()); video.requestVideoFrameCallback(cb); };
+  video.requestVideoFrameCallback(cb);
+}
+
+/* ---------- loop ---------- */
+function pushWin(a, item, t){ a.push(item); const tt = t == null ? item : t; while (a.length && tt - (a[0].t == null ? a[0] : a[0].t) > 2000) a.shift(); }
+function rate(a){ if (a.length < 2) return 0; const f = a[0].t == null ? a[0] : a[0].t, l = a[a.length - 1].t == null ? a[a.length - 1] : a[a.length - 1].t; return (a.length - 1)*1000/Math.max(1, l - f); }
+function stats(){
+  const inf = L.det.map(d => d.inf);
+  let gap = 0; for (let i = 1; i < L.rafT.length; i++) gap = Math.max(gap, L.rafT[i] - L.rafT[i - 1]);
+  return {detectFps:rate(L.det), camFps:L.camT.length ? rate(L.camT) : null, rafFps:rate(L.rafT), p50:RT.percentile(inf, 0.5), p95:RT.percentile(inf, 0.95), gap};
+}
+
+function tick(){
+  L.raf = requestAnimationFrame(tick);
+  const t = now();
+  pushWin(L.rafT, t);
+  if (L.prevRaf) L.gapMax = Math.max(L.gapMax, t - L.prevRaf);
+  L.prevRaf = t;
+  if (L.lmk && !L.loading && video.readyState >= 2 && !video.seeking && video.currentTime !== L.lastVT) {
+    L.lastVT = video.currentTime;
+    const ts = RT.nextTs(L.lastTs, t); L.lastTs = ts;
+    let res = null; const t0 = now();
+    try { res = L.lmk.detectForVideo(video, ts); } catch(e) { status('Pose error: ' + e.message); }
+    const inf = now() - t0;
+    if (res) onResult(res, inf, t);
+  }
+  draw();
+}
+
+function onResult(res, inf, t){
+  pushWin(L.det, {t, inf}, t);
+  const lm = res.landmarks && res.landmarks[0] ? RT.pack(res.landmarks[0]) : null;
+  const wl = res.worldLandmarks && res.worldLandmarks[0] ? RT.pack(res.worldLandmarks[0]) : null;
+  const aspect = video.videoWidth/Math.max(1, video.videoHeight);
+  const m = lm ? RT.measure(lm, wl, aspect) : null;
+  const f = {t, vt:video.currentTime*1000, lm, wl, aspect, w:video.videoWidth, h:video.videoHeight, inf, m, fc:RT.frameCheck(lm)};
+  L.cur = f;
+  for (const fn of L.on) { try { fn(f); } catch(e) { console.error(e); } }
+}
+
+/* ---------- drawing ---------- */
+function fitView(){
+  const st = $('labStage').getBoundingClientRect(), v = $('labView');
+  const a = (video.videoWidth && video.videoHeight) ? video.videoWidth/video.videoHeight : 4/3;
+  let w = st.width, h = w/a; if (h > st.height) { h = st.height; w = h*a; }
+  v.style.width = w + 'px'; v.style.height = h + 'px';
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  skel.width = Math.round(w*dpr); skel.height = Math.round(h*dpr);
+}
+window.addEventListener('resize', () => { if (!$('lab').hidden) fitView(); });
+video.addEventListener('loadedmetadata', fitView);
+
+const visCol = v => v >= 0.8 ? '#43b482' : v >= 0.5 ? '#e2a23b' : '#d6483d';
+function draw(){
+  const W = skel.width, H = skel.height, f = L.cur;
+  sctx.clearRect(0, 0, W, H);
+  if (f && f.lm && L.debug) {
+    const p = i => [f.lm[i][0]*W, f.lm[i][1]*H];
+    sctx.lineCap = 'round'; sctx.lineWidth = Math.max(2, W/320);
+    for (const [a, b] of BONES) {
+      sctx.strokeStyle = visCol(Math.min(f.lm[a][3], f.lm[b][3])); sctx.globalAlpha = 0.85;
+      sctx.beginPath(); sctx.moveTo(...p(a)); sctx.lineTo(...p(b)); sctx.stroke();
+    }
+    sctx.globalAlpha = 1;
+    for (let i = 0; i < 33; i++) { if (i > 0 && i < 11) continue; sctx.fillStyle = visCol(f.lm[i][3]); sctx.beginPath(); sctx.arc(...p(i), Math.max(3, W/220), 0, Math.PI*2); sctx.fill(); }
+  }
+  for (const fn of L.drawers) fn(sctx, W, H, f);
+  hud(f);
+}
+L.drawers = [];
+
+let hudAt = 0;
+function hud(f){
+  const t = now(); if (t - hudAt < 250) return; hudAt = t;
+  const hint = $('labHint');
+  const msg = !L.src ? '' : !f ? (L.loading ? 'Loading model' : '') : !f.lm ? 'No body seen' : f.fc.ok ? '' : f.fc.hint;
+  hint.hidden = !msg; if (msg) hint.textContent = msg;
+  const el = $('labHud'); el.hidden = !L.debug || !L.src;
+  if (el.hidden) return;
+  const s = stats(), n = (v, d = 0) => v == null ? '-' : (+v).toFixed(d);
+  const lines = [
+    `camera ${n(s.camFps)} fps  detect ${n(s.detectFps)} fps  screen ${n(s.rafFps)} fps`,
+    `inference p50 ${n(s.p50, 1)} ms  p95 ${n(s.p95, 1)} ms  worst gap ${n(s.gap)} ms`,
+    `${L.model} ${L.delegate || ''}  ${video.videoWidth}x${video.videoHeight}`
+  ];
+  if (f && f.lm) {
+    lines.push(VIS_KEYS.map(([k, i]) => `${k} ${Math.round(f.lm[i][3]*100)}`).slice(0, 7).join(' '));
+    lines.push(VIS_KEYS.map(([k, i]) => `${k} ${Math.round(f.lm[i][3]*100)}`).slice(7).join(' '));
+  }
+  for (const fn of L.hudLines) { const x = fn(f); if (x) lines.push(x); }
+  el.textContent = lines.join('\n');
+}
+L.hudLines = [];
+
+/* ---------- screen ---------- */
+function openLab(){
+  $('menu').hidden = true; $('lab').hidden = false; renderModel();
+  requestAnimationFrame(fitView);
+}
+function closeLab(){
+  stopSource(); for (const fn of L.closers) fn();
+  $('lab').hidden = true; $('menu').hidden = false;
+}
+L.closers = [];
+$('labBtn').addEventListener('click', () => { unlockAudio(); openLab(); });
+$('labBack').addEventListener('click', closeLab);
+$('labStart').addEventListener('click', () => { unlockAudio(); startCamera(); });
+$('labStop').addEventListener('click', () => { stopSource(); status('Camera off'); $('labEmpty').hidden = false; });
+$('labCam').addEventListener('change', e => startCamera(e.target.value));
+$('labDebug').addEventListener('click', e => { L.debug = !L.debug; e.target.classList.toggle('on', L.debug); });
+$('labModel').addEventListener('click', e => { const b = e.target.closest('button'); if (b) switchModel(b.dataset.v).catch(err => status('Model error: ' + err.message)); });
+
+// shared with the Phase 0 tools below
+globalThis.RoomTimeLab = {L, RT, $, video, status, statusLine, say, beep, stats, loadModel, switchModel, startCamera, stopSource, begin, fitView, want, unlockAudio, lockScreen};
+})();
+</script>
+<script id="rt-lab-tools">
+// Camera check tools: model bench, thermal soak, calibration, live readouts, recording.
+(() => {
+const {L, RT, $, video, status, statusLine, say, beep, stats, loadModel, want} = globalThis.RoomTimeLab;
+const now = () => performance.now();
+const n = (v, d = 0) => v == null || !isFinite(v) ? '-' : (+v).toFixed(d);
+const store = {
+  get(k){ try { return JSON.parse(localStorage.getItem('roomtime.' + k) || 'null'); } catch(e) { return null; } },
+  set(k, v){ try { localStorage.setItem('roomtime.' + k, JSON.stringify(v)); } catch(e) {} }
+};
+let busy = null; // the one tool running: 'bench' | 'soak' | 'cal' | 'record'
+const cancelled = {};
+// waits ms, in short steps so a tool can be stopped; resolves false if it was
+async function wait(ms, tool){
+  const end = now() + ms;
+  while (now() < end) { if (cancelled[tool] || !L.src) return false; await new Promise(r => setTimeout(r, Math.min(250, end - now()))); }
+  return !cancelled[tool] && !!L.src;
+}
+function claim(tool){
+  if (busy === 'file' && L.src !== 'file') busy = null;
+  if (!L.src) { status('Start the camera first'); return false; }
+  if (busy && busy !== tool) { status('Finish the ' + busy + ' first'); return false; }
+  busy = tool; cancelled[tool] = false; return true;
+}
+function release(tool){ if (busy === tool) busy = null; }
+
+// Save a file: the share sheet where there is one (iPad: Save to Files or Photos), else a download.
+// Call it straight from a tap so iOS allows the share sheet.
+async function saveFile(name, blob){
+  try {
+    const file = new File([blob], name, {type:blob.type});
+    if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file]}); return; }
+  } catch(e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+const jsonBlob = o => new Blob([JSON.stringify(o)], {type:'application/json'});
+const stamp = () => new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+const device = () => ({userAgent:navigator.userAgent, camera:L.cam, screen:[screen.width, screen.height, devicePixelRatio]});
+
+/* ---------- model bench ---------- */
+// Each model in turn: load, 3 s to settle, then 30 s measured while the player holds and moves in stance.
+// ?fast in the URL shortens the bench and the soak for headless checks
+const FAST = /[?&]fast\b/.test(location.search);
+const BENCH_MS = FAST ? 3000 : 30000, SETTLE_MS = FAST ? 500 : 3000;
+function renderBench(rows, note){
+  const best = rows.find(r => r.model === 'full');
+  const v = best ? RT.benchVerdict(best) : null;
+  $('benchOut').innerHTML = rows.length ? `<div class="rows">` + rows.map(r =>
+    `<div><span>${r.model} ${r.delegate}</span><span>${n(r.detectFps)} fps · ${n(r.p50, 0)}/${n(r.p95, 0)} ms · body ${n(r.body*100)}%</span></div>`).join('') + `</div>` +
+    (v ? `<div class="verdict ${v === 'main thread is fine' ? 'ok' : 'bad'}">Full: ${v}</div>` : '') +
+    (note ? `<div>${note}</div>` : '') : (note || 'Lite, full and heavy, 30 s each. Stand in stance and move a little.');
+}
+async function bench(){
+  if (busy === 'bench') { cancelled.bench = true; return; }
+  if (!claim('bench')) return;
+  const btn = $('benchBtn'); btn.textContent = 'Stop bench'; btn.classList.add('on');
+  const rows = [];
+  try {
+    for (const model of ['lite', 'full', 'heavy']) {
+      status('Bench: loading ' + model);
+      await loadModel(model);
+      say(model + '. Stance and move.');
+      if (!await wait(SETTLE_MS, 'bench')) break;
+      const inf = []; let det = 0, body = 0;
+      const fn = f => { inf.push(f.inf); det++; if (f.lm) body++; };
+      L.on.add(fn); L.gapMax = 0; const cam0 = L.camCount, t0 = now();
+      const left = setInterval(() => status(`Bench: ${model} ${Math.ceil((BENCH_MS - (now() - t0))/1000)} s`), 500);
+      const ok = await wait(BENCH_MS, 'bench');
+      clearInterval(left); L.on.delete(fn);
+      if (!ok) break;
+      const sec = (now() - t0)/1000;
+      rows.push({model, delegate:L.delegate, detectFps:det/sec, camFps:L.camCount > cam0 ? (L.camCount - cam0)/sec : null,
+        p50:RT.percentile(inf, 0.5), p95:RT.percentile(inf, 0.95), gap:L.gapMax, body:det ? body/det : 0});
+      renderBench(rows);
+    }
+  } catch(e) { status('Bench error: ' + e.message); }
+  const done = rows.length === 3;
+  if (done) { store.set('bench', {at:new Date().toISOString(), rows, device:device()}); $('benchSave').hidden = false; say('Bench done.'); beep(880, 0.15); }
+  renderBench(rows, done ? '' : 'Bench stopped.');
+  await loadModel(want.model).catch(() => {});
+  btn.textContent = 'Bench models'; btn.classList.remove('on');
+  release('bench'); status(statusLine());
+}
+
+/* ---------- thermal soak ---------- */
+// The chosen model for 15 minutes; a sample every 10 s. iOS has no thermal reading, so throttling shows as fps falling.
+const SOAK_MIN = 15, SOAK_STEP = FAST ? 200 : 10000; // fast: the 90 samples come every 0.2 s, labeled as 10 s
+let soakLog = null;
+function drawSoak(){
+  const c = $('soakChart'), x = c.getContext('2d'), dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = c.clientWidth, h = c.clientHeight; c.width = w*dpr; c.height = h*dpr; x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, w, h);
+  const s = soakLog ? soakLog.samples : [];
+  const top = Math.max(35, ...s.map(p => p.fps)) * 1.1, X = t => t/(SOAK_MIN*60)*w, Y = f => h - f/top*h;
+  x.strokeStyle = '#284460'; x.setLineDash([3, 3]); x.beginPath(); x.moveTo(0, Y(24)); x.lineTo(w, Y(24)); x.stroke(); x.setLineDash([]);
+  x.fillStyle = '#8ea2b4'; x.font = '10px system-ui'; x.fillText('24 fps', 2, Y(24) - 3);
+  if (s.length > 1) { x.strokeStyle = '#43b482'; x.lineWidth = 2; x.beginPath(); s.forEach((p, i) => i ? x.lineTo(X(p.t), Y(p.fps)) : x.moveTo(X(p.t), Y(p.fps))); x.stroke(); }
+}
+function renderSoak(){
+  const s = soakLog ? soakLog.samples : [], v = s.length ? RT.soakVerdict(s) : null, last = s[s.length - 1];
+  $('soakOut').innerHTML = !s.length ? `${SOAK_MIN} minutes on the selected model. Keep moving in front of the camera.` :
+    `<div class="rows"><div><span>Elapsed</span><span>${n(last.t/60, 1)} of ${SOAK_MIN} min</span></div>` +
+    `<div><span>Now</span><span>${n(last.fps)} fps · p95 ${n(last.p95)} ms</span></div>` +
+    `<div><span>First minute / last minute</span><span>${n(v.first)} / ${n(v.last)} fps</span></div></div>` +
+    (soakLog.done && !soakLog.complete ? `<div>Stopped at ${n(last.t/60, 1)} min; the verdict needs the full ${SOAK_MIN}.</div>` : '') +
+    (soakLog.complete ? `<div class="verdict ${v.pass ? 'ok' : 'bad'}">${v.pass ? 'Pass: held ' + n(v.ratio*100) + '% of its first-minute fps' : 'Throttled: ' + n(v.ratio*100) + '% of first-minute fps, last minute ' + n(v.last) + ' fps'}</div>` : '');
+  $('soakSave').hidden = !(soakLog && soakLog.done);
+  drawSoak();
+}
+async function soak(){
+  if (busy === 'soak') { cancelled.soak = true; return; }
+  if (!claim('soak')) return;
+  const btn = $('soakBtn'); btn.textContent = 'Stop soak'; btn.classList.add('on');
+  soakLog = {at:new Date().toISOString(), model:L.model, delegate:L.delegate, device:device(), samples:[], done:false};
+  say('Soak test. ' + SOAK_MIN + ' minutes.');
+  const t0 = now(); let inf = [], det = 0, body = 0, cam0 = L.camCount; L.gapMax = 0;
+  const fn = f => { inf.push(f.inf); det++; if (f.lm) body++; };
+  L.on.add(fn);
+  try {
+    for (let k = 1; k <= SOAK_MIN*60*1000/SOAK_STEP; k++) {
+      if (!await wait(t0 + k*SOAK_STEP - now(), 'soak')) break;
+      const sec = 10, real = SOAK_STEP/1000;
+      soakLog.samples.push({t:k*sec, fps:det/real, camFps:L.camCount > cam0 ? (L.camCount - cam0)/real : null,
+        p50:RT.percentile(inf, 0.5), p95:RT.percentile(inf, 0.95), gap:L.gapMax, body:det ? body/det : 0});
+      inf = []; det = 0; body = 0; cam0 = L.camCount; L.gapMax = 0;
+      if (k % 30 === 0 && k*sec < SOAK_MIN*60) say(Math.round(k*sec/60) + ' minutes.');
+      status(`Soak: ${n(k*sec/60, 1)} of ${SOAK_MIN} min`);
+      renderSoak();
+    }
+  } finally { L.on.delete(fn); }
+  const full = soakLog.samples.length && soakLog.samples[soakLog.samples.length - 1].t >= SOAK_MIN*60;
+  soakLog.done = soakLog.samples.length > 0; soakLog.complete = full; soakLog.verdict = RT.soakVerdict(soakLog.samples);
+  if (full) { store.set('soak', soakLog); say('Soak done.'); beep(880, 0.15); }
+  renderSoak();
+  btn.textContent = 'Thermal soak'; btn.classList.remove('on');
+  release('soak'); status(statusLine());
+}
+
+$('benchBtn').addEventListener('click', bench);
+$('soakBtn').addEventListener('click', soak);
+$('soakSave').addEventListener('click', () => soakLog && saveFile(`room-time-soak-${stamp()}.json`, jsonBlob(soakLog)));
+$('benchSave').addEventListener('click', () => { const b = store.get('bench'); if (b) saveFile(`room-time-bench-${stamp()}.json`, jsonBlob(b)); });
+{ const b = store.get('bench'); renderBench(b ? b.rows : [], b ? 'Last run ' + b.at.slice(0, 10) : ''); $('benchSave').hidden = !b; }
+{ const s = store.get('soak'); if (s) { soakLog = s; } requestAnimationFrame(renderSoak); }
+L.closers.push(() => { cancelled.bench = cancelled.soak = true; });
+
+/* ---------- calibration ---------- */
+// Five held poses. Each: a spoken cue, time to get there, a framing check, then 3 s of frames whose medians are kept.
+const POSE_INFO = {
+  stand:   {name:'Standing', say:'Stand tall, feet under your hips. Hold.'},
+  square:  {name:'Square stance', say:'Square stance. Hold.'},
+  stagger: {name:'Staggered stance', say:'Staggered stance, your normal lead. Hold.'},
+  wallL:   {name:'Left wall', say:'Shuffle to your left wall. Square stance. Hold.'},
+  wallR:   {name:'Right wall', say:'Now your right wall. Square stance. Hold.'}
+};
+const HOLD_MS = 3000, MIN_FRAMES = 5, FRAME_WAIT_MS = 20000;
+let cal = store.get('cal');
+L.cal = cal;
+
+async function capturePose(pose){
+  const info = POSE_INFO[pose], wall = pose === 'wallL' || pose === 'wallR';
+  say(info.say); status('Calibrate: ' + info.name);
+  if (!await wait(wall ? 4000 : 2500, 'cal')) return null;
+  // at a wall the body may sit near the picture's edge; that is the point of the capture
+  const good = f => f && f.lm && f.m && f.m.vis >= 0.5 && (f.fc.ok || (wall && f.fc.hint === 'Move to the middle'));
+  const t0 = now(); let hintAt = now();
+  while (!good(L.cur)) {
+    if (now() - t0 > FRAME_WAIT_MS) { say(info.name + ' skipped.'); status(`${info.name} skipped: ${L.cur && L.cur.lm ? L.cur.fc.hint || 'landmarks too faint' : 'no body seen'}`); await wait(1500, 'cal'); return null; }
+    if (now() - hintAt > 4000) { hintAt = now(); const h = !L.cur || !L.cur.lm ? 'Step into view' : L.cur.fc.hint; if (h) say(h); }
+    if (!await wait(200, 'cal')) return null;
+  }
+  const got = []; let seen = 0;
+  const fn = f => { seen++; if (good(f)) got.push(f.m); };
+  beep(660, 0.1); L.on.add(fn);
+  const ok = await wait(HOLD_MS, 'cal');
+  L.on.delete(fn);
+  if (!ok) return null;
+  // most of the hold must be usable frames, whatever the frame rate
+  if (got.length < Math.max(MIN_FRAMES, 0.6*seen)) { say(info.name + ' skipped, lost you.'); status(`${info.name}: ${got.length} of ${seen} frames usable`); return null; }
+  beep(990, 0.12);
+  return got;
+}
+
+async function calibrate(poses){
+  if (busy === 'cal') { cancelled.cal = true; return; }
+  if (!claim('cal')) return;
+  const btn = $('calBtn'); btn.textContent = 'Stop'; btn.classList.add('on');
+  // poses not redone keep their saved medians
+  const caps = {};
+  for (const p of RT.POSES) caps[p] = cal && cal[p] ? [cal[p]] : [];
+  let got = 0;
+  for (const p of poses) {
+    const g = await capturePose(p);
+    if (cancelled.cal || !L.src) break;
+    if (g) { caps[p] = g; got++; }
+  }
+  if (got && caps.stand.length) {
+    const f = L.cur;
+    cal = RT.buildCal(caps, {at:new Date().toISOString(), aspect:f ? f.aspect : null, w:f ? f.w : null, h:f ? f.h : null, model:L.model, camera:L.cam ? L.cam.label : ''});
+    L.cal = cal; store.set('cal', cal);
+    say(poses.length > 1 ? 'Calibration saved.' : 'Saved.');
+  } else if (got) say('Stand first, then the rest.');
+  btn.textContent = 'Calibrate'; btn.classList.remove('on');
+  release('cal'); status(statusLine()); renderCal();
+}
+
+function renderCal(){
+  const c = cal, row = (pose, txt) => `<div><span>${POSE_INFO[pose].name}</span><span>${txt} <button class="redo" data-pose="${pose}" aria-label="Redo ${POSE_INFO[pose].name}">redo</button></span></div>`;
+  const stance = s => s ? `level ${n(RT.levelFromRatio(s.ratios.world, c.square.ratios.world), 2)} · hips ${n(s.ratios.world*100)}% · feet ${n(s.footWorld, 1)} S` : '-';
+  $('calOut').innerHTML = !c || !c.stand ? 'Standing, square stance, staggered stance, then each wall. About a minute; the iPad talks you through it.' :
+    `<div class="rows">` +
+    row('stand', c.stand.world ? `hips ${n(c.stand.world.hipH, 2)} m · S ${n(c.stand.world.S, 2)} m` : `hips ${n(c.stand.img.hipH, 3)}`) +
+    row('square', c.square ? `hips ${n(c.square.ratios.world*100)}% · feet ${n(c.square.footWorld, 1)} S` : '-') +
+    row('stagger', c.stagger && c.square ? stance(c.stagger) : '-') +
+    row('wallL', c.wallL ? `x ${n(c.wallL.hipX, 2)}` : '-') +
+    row('wallR', c.wallR ? `x ${n(c.wallR.hipX, 2)}` : '-') +
+    `</div><div>${c.at.slice(0, 16).replace('T', ' ')} · ${c.w}x${c.h} · ${c.model}</div>` +
+    (c.w && L.cur && (L.cur.w !== c.w || L.cur.h !== c.h) ? `<div class="verdict bad">The camera picture changed since; calibrate again.</div>` : '');
+  $('calSave').hidden = !c;
+}
+$('calBtn').addEventListener('click', () => calibrate(RT.POSES));
+$('calOut').addEventListener('click', e => { const b = e.target.closest('.redo'); if (b) calibrate([b.dataset.pose]); });
+$('calSave').addEventListener('click', () => cal && saveFile(`room-time-cal-${stamp()}.json`, jsonBlob(cal)));
+renderCal();
+L.closers.push(() => { cancelled.cal = true; });
+
+/* ---------- live readouts ---------- */
+let hipSrc = store.get('hipSrc') || 'world';
+const SRC = {world:'World', imgS:'Image ÷ S', img:'Image'};
+L.on.add(f => { f.r = f.m ? RT.readouts(f.m, cal, hipSrc) : null; });
+
+function renderSrc(){ $('liveSrc').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === hipSrc))); }
+$('liveSrc').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; hipSrc = b.dataset.v; store.set('hipSrc', hipSrc); renderSrc(); });
+renderSrc();
+
+const ZONE = {tall:{t:'Tall', c:'#e2a23b'}, stance:{t:'Stance', c:'#43b482'}, deep:{t:'Deep', c:'#e8edf1'}};
+// The level meter and the floor strip, drawn unmirrored on the stage so they read from 6 ft.
+const meter = $('labMeter'), mctx = meter.getContext('2d');
+function drawMeter(){
+  const dpr = Math.min(devicePixelRatio || 1, 2), w = meter.clientWidth, h = meter.clientHeight;
+  if (meter.width !== Math.round(w*dpr)) { meter.width = Math.round(w*dpr); meter.height = Math.round(h*dpr); }
+  mctx.setTransform(dpr, 0, 0, dpr, 0, 0); mctx.clearRect(0, 0, w, h);
+  const r = L.cur && L.cur.r;
+  meter.hidden = !L.src;
+  if (!L.src) return;
+  // level bar on the right
+  const bx = w - 46, by = 30, bw = 30, bh = h - 110, yOf = lv => by + (1 - Math.max(0, Math.min(1.1, lv))/1.1)*bh;
+  mctx.fillStyle = 'rgba(8,16,24,.74)'; mctx.fillRect(bx - 8, by - 24, bw + 16, bh + 32);
+  mctx.fillStyle = '#13212f'; mctx.fillRect(bx, by, bw, bh);
+  mctx.fillStyle = 'rgba(67,180,130,.5)'; mctx.fillRect(bx, yOf(RT.BAND.hi), bw, yOf(RT.BAND.lo) - yOf(RT.BAND.hi));
+  mctx.fillStyle = '#8ea2b4'; mctx.font = '500 11px system-ui'; mctx.textAlign = 'center'; mctx.fillText('Level', bx + bw/2, by - 8);
+  if (r && r.level != null) {
+    const z = ZONE[r.zone];
+    mctx.fillStyle = z.c; mctx.fillRect(bx - 6, yOf(r.level) - 3, bw + 12, 6);
+    mctx.font = '700 34px "Barlow Condensed", sans-serif'; mctx.textAlign = 'right';
+    mctx.lineWidth = 5; mctx.strokeStyle = 'rgba(8,16,24,.74)'; mctx.strokeText(z.t, bx - 14, yOf(r.level) + 12); mctx.fillText(z.t, bx - 14, yOf(r.level) + 12);
+  } else if (L.cur && L.cur.lm && (!cal || !cal.square)) {
+    mctx.font = '500 12px system-ui'; mctx.textAlign = 'right'; mctx.fillStyle = '#e8edf1'; mctx.fillText('calibrate for level', bx - 10, by + bh/2);
+  }
+  // floor strip at the bottom, left wall on the left (the preview is a mirror)
+  if (r && r.floorX != null) {
+    const fw = Math.min(260, w*0.5), fx = (w - fw)/2, fy = h - 64;
+    mctx.fillStyle = 'rgba(8,16,24,.74)'; mctx.fillRect(fx - 10, fy - 16, fw + 20, 30);
+    mctx.fillStyle = '#13212f'; mctx.fillRect(fx, fy, fw, 6);
+    mctx.fillStyle = '#a9472f'; mctx.fillRect(fx, fy, fw*0.07, 6); mctx.fillRect(fx + fw*0.93, fy, fw*0.07, 6);
+    const dx = fx + fw*(Math.max(-1, Math.min(1, r.floorX)) + 1)/2;
+    mctx.fillStyle = Math.abs(r.floorX) > 0.85 ? '#a9472f' : '#e8edf1'; mctx.beginPath(); mctx.arc(dx, fy + 3, 7, 0, Math.PI*2); mctx.fill();
+  }
+}
+L.drawers.push(drawMeter);
+
+let liveAt = 0;
+function renderLive(){
+  const t = now(); if (t - liveAt < 200) return; liveAt = t;
+  const f = L.cur, r = f && f.r, el = $('liveOut');
+  if (!L.src || !r) { el.innerHTML = L.src ? 'No body seen.' : 'Start the camera.'; return; }
+  const elb = v => `<b style="color:${v <= 1 ? '#43b482' : '#e2a23b'}">${n(v, 2)}</b>`;
+  const sq = cal && cal.square;
+  el.innerHTML = `<div class="rows">` +
+    (r.level != null ? `<div><span>Level</span><span><b style="color:${ZONE[r.zone].c}">${n(r.level, 2)} ${ZONE[r.zone].t}</b></span></div>` : '') +
+    (r.ratios ? `<div><span>Hips vs standing</span><span>world ${n(r.ratios.world*100)} · img÷S ${n(r.ratios.imgS*100)} · img ${n(r.ratios.img*100)}%</span></div>` : '') +
+    `<div><span>Feet</span><span>${n(r.footWorld, 2)} S world · ${n(r.footS, 2)} img${sq ? ' · square ' + n(sq.footWorld, 2) : ''}</span></div>` +
+    `<div><span>Elbows L / R</span><span>${elb(r.elbowL)} / ${elb(r.elbowR)} img · ${n(r.elbowLWorld, 2)} / ${n(r.elbowRWorld, 2)} world</span></div>` +
+    (r.floorX != null ? `<div><span>Floor</span><span>${n(r.floorX, 2)} (wall to wall, -1 to 1)</span></div>` : '') +
+    `</div>`;
+}
+L.drawers.push(renderLive);
+L.hudLines.push(f => f && f.r ? `level ${n(f.r.level, 2)} ${f.r.zone || ''}  feet ${n(f.r.footWorld, 2)} S  elbows ${n(f.r.elbowL, 2)} ${n(f.r.elbowR, 2)}  floor ${n(f.r.floorX, 2)}` : '');
+
+/* ---------- recording and video files ---------- */
+// Record: the camera video through MediaRecorder plus a landmark trace on the same clock (ms from the
+// recorder's start). Load video: a saved clip runs through the same detectForVideo loop a frame at a time
+// (seek, wait for the frame, detect) and exports the same trace, timed by the video's own clock.
+const REC_MAX_MS = 5*60*1000, FILE_STEP = 1/30;
+let rec = null, out = null; // out: the last {name, video, trace} ready to save
+
+function newTrace(source){
+  return {format:'room-time-trace', version:1,
+    meta:{source, at:new Date().toISOString(), model:L.model, delegate:L.delegate, device:device(), cal, src:hipSrc, aspect:null, w:null, h:null},
+    frames:[], labels:[]};
+}
+const sizeTrace = (tr, f) => { if (!tr.meta.w && f.w) Object.assign(tr.meta, {aspect:f.aspect, w:f.w, h:f.h}); };
+function pickMime(){
+  if (!window.MediaRecorder) return null;
+  for (const m of ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm']) if (MediaRecorder.isTypeSupported(m)) return m;
+  return '';
+}
+function showOut(){
+  $('recVideo').hidden = !(out && out.video); $('recTrace').hidden = !(out && out.trace);
+  if (out) $('recOut').textContent = `${out.name}: ${out.trace.frames.length} frames` + (out.video ? `, video ${n(out.video.size/1e6, 1)} MB` : '') + '. Save each below.';
+}
+
+function record(){
+  if (busy === 'record') { stopRecord(); return; }
+  if (L.src !== 'camera') { status('Recording needs the camera'); return; }
+  if (!claim('record')) return;
+  const mime = pickMime(), tr = newTrace('camera'), chunks = [];
+  let mr = null;
+  if (mime !== null) { try { mr = new MediaRecorder(L.stream, mime ? {mimeType:mime, videoBitsPerSecond:6e6} : undefined); } catch(e) { mr = null; } }
+  rec = {mr, chunks, tr, t0:null, mime:mr ? (mr.mimeType || mime) : null};
+  rec.fn = f => {
+    if (rec.t0 == null) return;
+    const t = Math.round(f.t - rec.t0);
+    rec.tr.frames.push({t, lm:f.lm, wl:f.wl}); sizeTrace(rec.tr, f);
+    if (t > REC_MAX_MS) stopRecord();
+  };
+  L.on.add(rec.fn);
+  rec.tick = setInterval(() => { if (rec && rec.t0 != null) status(`Recording ${n((now() - rec.t0)/1000)} s`); }, 500);
+  if (mr) {
+    mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstart = () => { rec.t0 = now(); };
+    mr.onstop = finishRecord;
+    mr.start(1000);
+  } else { rec.t0 = now(); status('No video recorder here; recording the trace only'); }
+  $('recBtn').textContent = 'Stop recording'; $('recBtn').classList.add('on');
+  out = null; showOut(); beep(660, 0.1);
+}
+function stopRecord(){
+  if (!rec || rec.stopping) return;
+  rec.stopping = true;
+  if (rec.mr && rec.mr.state !== 'inactive') rec.mr.stop(); else finishRecord();
+}
+function finishRecord(){
+  if (!rec) return;
+  L.on.delete(rec.fn); clearInterval(rec.tick);
+  const name = 'room-time-' + stamp();
+  out = {name, trace:rec.tr, video:rec.chunks.length ? new Blob(rec.chunks, {type:rec.mime || 'video/mp4'}) : null,
+    ext:/webm/.test(rec.mime || '') ? 'webm' : 'mp4'};
+  rec = null; beep(990, 0.12);
+  $('recBtn').textContent = 'Record'; $('recBtn').classList.remove('on');
+  release('record'); status(statusLine()); showOut();
+}
+
+let fileFn = null;
+function endFile(){ if (fileFn) L.on.delete(fileFn); fileFn = null; if (busy === 'file') busy = null; }
+async function loadVideoFile(file){
+  endFile();
+  if (busy) { status('Finish the ' + busy + ' first'); return; }
+  const {stopSource, begin} = globalThis.RoomTimeLab;
+  stopSource(); $('labEmpty').hidden = true;
+  try {
+    L.fileUrl = URL.createObjectURL(file);
+    video.srcObject = null; video.muted = true; video.src = L.fileUrl;
+    await new Promise((res, rej) => { video.onloadeddata = res; video.onerror = () => rej(new Error('this browser cannot play the file')); });
+    video.onloadeddata = video.onerror = null;
+    video.pause();
+    L.src = 'file'; L.mirror = false; L.cam = {label:file.name, width:video.videoWidth, height:video.videoHeight};
+    await loadModel(want.model);
+  } catch(e) { status('Video error: ' + e.message); stopSource(); return; }
+  busy = 'file';
+  const tr = newTrace('file'); tr.meta.file = file.name; tr.meta.stepMs = FILE_STEP*1000;
+  const dur = video.duration;
+  const fn = f => {
+    if (L.src !== 'file') { endFile(); return; }
+    tr.frames.push({t:Math.round(f.vt), lm:f.lm, wl:f.wl}); sizeTrace(tr, f);
+    status(`Video: ${n(100*f.vt/1000/dur)}%`);
+    const next = f.vt/1000 + FILE_STEP;
+    if (next < dur) video.currentTime = next;
+    else done();
+  };
+  const done = () => {
+    endFile();
+    out = {name:file.name.replace(/\.[^.]+$/, ''), trace:tr, video:null};
+    status(`Video done: ${tr.frames.length} frames`); showOut(); beep(990, 0.12);
+  };
+  fileFn = fn; L.on.add(fn);
+  begin(); // detects the first frame; each detection then seeks to the next
+}
+
+$('recBtn').addEventListener('click', record);
+$('fileBtn').addEventListener('click', () => $('fileIn').click());
+$('fileIn').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadVideoFile(f); });
+$('recVideo').addEventListener('click', () => out && out.video && saveFile(`${out.name}.${out.ext}`, out.video));
+$('recTrace').addEventListener('click', () => out && saveFile(`${out.name}.trace.json`, jsonBlob(out.trace)));
+L.closers.push(() => { stopRecord(); endFile(); });
+
+Object.assign(globalThis.RoomTimeLab, {store, saveFile, jsonBlob, stamp, device, wait, claim, release, cancelled});
 })();
 </script>
 </body>
