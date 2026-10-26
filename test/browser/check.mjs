@@ -40,6 +40,10 @@ try {
     const rel = rt.request().url().split('@1.1.1/')[1];
     rt.fulfill({ status: 200, headers: { 'content-type': rel.endsWith('.wasm') ? 'application/wasm' : 'text/javascript', 'access-control-allow-origin': '*' }, body: readFileSync(path.join(MP, 'package', rel)) });
   });
+  await page.route('https://cdn.jsdelivr.net/npm/three@0.186.1/**', (rt) => {
+    const rel = rt.request().url().split('@0.186.1/')[1];
+    rt.fulfill({ status: 200, headers: { 'content-type': 'text/javascript', 'access-control-allow-origin': '*' }, body: readFileSync(path.join(MP, 'three/package', rel)) });
+  });
   await page.route('https://storage.googleapis.com/**', (rt) => rt.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: readFileSync(path.join(MP, rt.request().url().split('/').pop())) }));
   await page.route('https://fonts.googleapis.com/**', (rt) => rt.fulfill({ status: 200, body: '' }));
   await page.goto('http://localhost:8099/?fast');
@@ -85,10 +89,13 @@ try {
   await page.waitForSelector('#recTrace:not([hidden])', { timeout: 15000 });
   check(/frames/.test(await page.textContent('#recOut')), 'recording made a trace: ' + await page.textContent('#recOut'));
 
-  // the touch game still works
+  // the touch game still works, now in 3D
   await page.click('#labBack');
   await page.click('#autoBtn'); await page.waitForTimeout(1500);
   check(await page.textContent('#phaseName') === 'Warm-in', 'touch auto-play still starts');
+  await page.waitForFunction(() => globalThis.RoomTime3D && RoomTime3D.ok, null, { timeout: 30000 }).catch(() => {});
+  const r3 = await page.evaluate(() => ({ ok: RoomTime3D.ok, ms: RoomTime3D.buildMs }));
+  check(r3.ok, `3D view renders (body built in ${r3.ms} ms)`);
 } finally {
   await browser.close(); server.close();
 }

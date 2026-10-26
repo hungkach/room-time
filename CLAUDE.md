@@ -6,7 +6,8 @@ Player: Mark, former wrestler, USAW certified, S&C coach. Trains in half a small
 
 ## Stack (do not change without asking)
 
-- One self-contained `index.html`: plain canvas, no framework, no build step.
+- One self-contained `index.html`: plain canvas for the 2D overlay, no framework, no build step.
+- three.js `0.186.1` from jsdelivr through an import map (Mark approved it for the 3D view on 10/26). The 3D view is optional: if three.js or WebGL is missing, the 2D prototype view draws instead.
 - MediaPipe Pose Landmarker from `@mediapipe/tasks-vision@1.1.1` (jsdelivr), not the legacy `@mediapipe/pose`. Default model `pose_landmarker_full` (float16/1), GPU delegate with CPU fallback. Lite and heavy only for comparison.
 - iPad front ultra-wide camera, landscape, mounted at hip height facing the player. An optional side device comes later.
 - Shared engine patterns come from `hungkach/body-arcade` (`engine/`). Copying code is fine; note the source commit next to it. Never edit body-arcade from here.
@@ -26,6 +27,7 @@ Player: Mark, former wrestler, USAW certified, S&C coach. Trains in half a small
 - An always-available debug overlay shows FPS, inference time, landmark visibility and live metric values.
 - Camera check (menu button, Phase 0): `<script id="rt-lab">` (camera, model, loop, overlay) and `<script id="rt-lab-tools">` (bench, soak, calibration, live readouts, recording, video files). They share `globalThis.RoomTimeLab`; each frame goes to the `L.on` listeners as `{t, vt, lm, wl, aspect, w, h, inf, m, fc, r}`.
 - Traces (recorded, from a video file, or fixtures): `{format: 'room-time-trace', version: 1, meta: {aspect, w, h, cal, src, model, ...}, frames: [{t, lm, wl}], labels: [{from, to, label}]}`, landmarks packed as `[x, y, z, visibility]`. Labels are `tall`, `stance` or `deep` for now.
+- 3D view: `<script type="module" id="rt-3d">` renders the room, the opponent and your arms on `#cv3d` under the 2D canvas `#cv`, reading the game through `globalThis.RoomTimeGame` (read only); `RoomTime3D.ok` tells the 2D `draw()` to skip its own room and wrestler. The opponent is built in code: soft shapes summed into one surface with marching cubes, skinned to a skeleton (the head on a finer grid on the head bone), the singlet and shoes painted by smooth scores in a shader. Poses: legs and upper arms are absolute angles from hanging straight down. `RoomTime3D.debug.cam` can override the camera for close-ups.
 - Calibration lives in localStorage `roomtime.cal`; the level scale puts the calibrated square stance at 0.45 inside the prototype's band (0.32 to 0.58).
 
 ## Landmarks (MediaPipe Pose, 33 points)
@@ -53,7 +55,7 @@ L and R are the player's own left and right.
 
 - Tests: `node --test test/*.test.mjs` (Node 20+, no dependencies).
 - Regenerate the synthetic fixture: `node test/helpers/make-synthetic-fixture.mjs`.
-- Headless browser check (Chromium, fake camera, about two minutes): `MP_DIR=<dir> sh test/browser/fetch-mediapipe.sh` once, then `MP_DIR=<dir> node test/browser/check.mjs`. It serves MediaPipe from `MP_DIR` (jsdelivr is blocked in the cloud container) and swaps the model for the synthetic figure to drive calibration and recording.
+- Headless browser check (Chromium, fake camera, about two minutes): `MP_DIR=<dir> sh test/browser/fetch-mediapipe.sh` once, then `MP_DIR=<dir> node test/browser/check.mjs`. It serves MediaPipe and three.js from `MP_DIR` (jsdelivr is blocked in the cloud container) and swaps the model for the synthetic figure to drive calibration and recording.
 - `?fast` in the URL shortens the bench and the soak.
 - Serve locally: `npx http-server -p 8080` and open `http://localhost:8080` (localhost counts as secure for the camera).
 - iPad on the LAN needs https: `mkcert -install && mkcert <lan-ip>`, then `npx http-server -S -C <lan-ip>.pem -K <lan-ip>-key.pem -p 8443`, or just push to a branch and test on GitHub Pages.
