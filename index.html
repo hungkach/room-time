@@ -218,7 +218,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
-      <div><b>Camera play:</b> prop the device sideways at hip height about 6 ft away (on an iPad, Center Stage off in Control Center). It calibrates you first: three holds, then shuffle side to side to the edges of the picture. With the back camera the screen faces away, so it all runs by sound.</div>
+      <div><b>Camera play:</b> prop the device sideways at hip height about 6 ft away (on an iPad, Center Stage off in Control Center). It calibrates you first: three holds, then shuffle to your left until it beeps or you reach your wall, pause, then all the way to your right and pause. With the back camera the screen faces away, so it all runs by sound.</div>
       <div><b>Block:</b> a down block, hands to his head and shoulders, hips back, feet planted. It stops a shot from range for little effort; a deep shot runs through it and needs the sprawl.</div>
       <div><b>Sprawl, shot, snap:</b> your big moves. Each round, the coach calls them and the drill partner shows the look.</div>
       <div><b>Live go reads:</b></div>
@@ -492,6 +492,34 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     if (left == null || right - left < (minWidth == null ? 0.5 : minWidth)) return null;
     return {left, right, width:right - left, center:(left + right)/2};
   };
+  // One pass of the calibration's directed shuffle (side -1: to your left, +1: to your right). The edge is where you
+  // pause at the far end: once you've traveled minTravel that way and held within stillM for pauseMs, at the farthest
+  // point you've reached, the edge is the median of the pause. If time runs out first, timeout() gives the farthest
+  // you got (the 5th or 95th percentile, so one stray frame doesn't count). Meters, + toward your right.
+  RT.EDGE = {minTravel:0.3, pauseMs:800, stillM:0.05, nearFar:0.1};
+  RT.EdgePass = class {
+    constructor(side, opts){ this.side = side; this.o = Object.assign({}, RT.EDGE, opts || {}); this.xs = []; this.x0 = null; this.far = null; }
+    push(t, X){
+      if (!num(X)) return null;
+      const o = this.o, sd = this.side;
+      if (this.x0 == null) { this.x0 = X; this.far = X; }
+      if (sd*(X - this.far) > 0) this.far = X;
+      this.xs.push([t, X]);
+      const recent = this.xs.filter(p => t - p[0] <= o.pauseMs);
+      if (!recent.length || t - recent[0][0] < o.pauseMs*0.9) return null;
+      const vals = recent.map(p => p[1]), mid = RT.median(vals);
+      const still = Math.max(...vals) - Math.min(...vals) <= o.stillM;
+      if (still && sd*(mid - this.x0) >= o.minTravel && sd*(this.far - mid) <= o.nearFar) return {edge:mid, paused:true};
+      return null;
+    }
+    timeout(){
+      const xs = this.xs.map(p => p[1]);
+      if (!xs.length) return null;
+      const e = RT.percentile(xs, this.side > 0 ? 0.95 : 0.05);
+      return this.side*(e - this.x0) >= this.o.minTravel*0.5 ? {edge:e, paused:false} : null;
+    }
+  };
+
   // Learns the floor from every position it is given; it only ever widens what it started with.
   RT.FloorTracker = class {
     constructor(start){ this.start = start || null; this.xs = []; }
@@ -509,7 +537,8 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     const cal = Object.assign({v:1, at:null}, meta || {});
     for (const pose of RT.POSES) if (caps[pose] && caps[pose].length) cal[pose] = RT.medianTree(caps[pose]);
     if (!cal.stand) return cal;
-    if (caps.sweep && caps.sweep.length) { const f = RT.floorFrom(caps.sweep.map(m => num(m.Xcam) ? m.Xcam*cal.stand.img.dir : null)); if (f) cal.floor = f; }
+    if (caps.sweep && caps.sweep.floor) cal.floor = caps.sweep.floor;   // the directed shuffle's two edges
+    else if (caps.sweep && caps.sweep.length) { const f = RT.floorFrom(caps.sweep.map(m => num(m.Xcam) ? m.Xcam*cal.stand.img.dir : null)); if (f) cal.floor = f; }
     for (const pose of ['square', 'stagger']) {
       const c = cal[pose]; if (!c) continue;
       c.ratios = RT.hipRatios(c, cal.stand);
@@ -1479,7 +1508,7 @@ function draw(){
     else if (S.mode === 'calib') {
       ctx.font = FD(700, 44); ctx.fillText('Warm-up calibration', W/2, H*0.36);
       ctx.font = FB(500, 15); ctx.fillText(S.calibNote || '', W/2, H*0.36 + 30);
-      ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Three holds, then shuffle side to side to the edges of the picture.', W/2, H*0.36 + 54);
+      ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Three holds, then shuffle to your left and pause, then to your right and pause.', W/2, H*0.36 + 54);
     }
     else {
       const next = S.plan[S.r + 1];
@@ -1987,15 +2016,15 @@ L.closers.push(() => { cancelled.bench = cancelled.soak = true; });
 
 /* ---------- calibration ---------- */
 // Three held poses (a spoken cue, time to get there, a framing check, then 3 s of frames whose medians are kept),
-// then your floor in meters from shuffling side to side, out to the edges of the picture or your walls.
+// then your floor in meters: shuffle to your left, pause, then to your right, pause (to the edge of the picture or your walls).
 // In camera play the warm-in's circling can still widen it.
 const POSE_INFO = {
   stand:   {name:'Standing', say:'Stand tall, feet under your hips. Hold.'},
   square:  {name:'Square stance', say:'Square stance. Feet a little wider than your shoulders, knees bent, hips down, chest over your knees, head up, elbows in, hands in front.'},
   stagger: {name:'Staggered stance', say:'Staggered stance, your normal lead. Lead foot forward about heel to toe, same level, same hands.'},
-  sweep:   {name:'Floor', say:'Now shuffle side to side in your stance, out to the edges of the picture or your walls.'}
+  sweep:   {name:'Floor', say:''}   // spoken one side at a time in captureSweep
 };
-const HOLD_MS = 3000, MIN_FRAMES = 5, FRAME_WAIT_MS = 20000, SWEEP_MS = FAST ? 4000 : 12000;
+const HOLD_MS = 3000, MIN_FRAMES = 5, FRAME_WAIT_MS = 20000, PASS_MS = FAST ? 6000 : 10000;
 // stance coaching before each stance hold: up to COACH_MS of one spoken fix at a time (RT.stanceCheck), then hold
 const COACH_MS = FAST ? 4000 : 15000, CUE_GAP_MS = 3500, SETTLE_OK_MS = 600;
 const formNotes = {};   // per stance, the points still off when the hold began
@@ -2008,24 +2037,34 @@ function note(text){
 let cal = store.get('cal');
 L.cal = cal;
 
-// Side to side for SWEEP_MS, in meters. A short high beep when you reach the edge of the picture.
+// The floor in meters, one side at a time: shuffle to your left until it beeps (the edge of the picture) or you reach
+// your wall, pause there, then all the way to your right. Each edge is read from that pause (RT.EdgePass). A short
+// high beep when you reach the edge of the picture, a lower one when a side is done.
 async function captureSweep(){
-  const info = POSE_INFO.sweep;
-  say(info.say); note('Calibrate: ' + info.name);
-  if (!await wait(1500, 'cal')) return null;
-  let edgeAt = 0;
-  const got = [], fn = f => {
-    if (!f.lm || !f.m || f.m.vis < 0.5 || f.m.Xcam == null) return;
-    got.push({Xcam:f.m.Xcam});
-    if (f.fc.hint === 'Move to the middle' && f.t - edgeAt > 700) { edgeAt = f.t; beep(1320, 0.05); }
-  };
-  beep(660, 0.1); L.on.add(fn);
-  const ok = await wait(SWEEP_MS, 'cal');
-  L.on.delete(fn);
-  if (!ok) return null;
-  if (!cal || !cal.stand || !RT.floorFrom(got.map(m => m.Xcam*cal.stand.img.dir))) { say('Floor skipped, move further each way.'); note('Floor skipped: not enough side to side'); return null; }
-  beep(990, 0.12);
-  return got;
+  note('Calibrate: Floor');
+  const edges = {};
+  for (const [side, name, line] of [[-1, 'left', 'Shuffle to your left in your stance, until it beeps or you reach your wall. Pause there.'],
+                                    [1, 'right', 'Now all the way to your right. Pause there.']]) {
+    say(line); note('Floor: to your ' + name);
+    if (!await wait(1200, 'cal')) return null;
+    const pass = new RT.EdgePass(side), t0 = now();
+    let res = null, edgeAt = 0;
+    const fn = f => {
+      if (res || !f.r || f.r.X == null) return;
+      if (f.fc.hint === 'Move to the middle' && f.t - edgeAt > 700) { edgeAt = f.t; beep(1320, 0.05); }
+      res = pass.push(f.t, f.r.X);
+    };
+    L.on.add(fn);
+    while (!res && now() - t0 < PASS_MS) if (!await wait(150, 'cal')) { L.on.delete(fn); return null; }
+    L.on.delete(fn);
+    if (!res) res = pass.timeout();
+    if (!res) { say('Floor skipped, move further each way.'); note('Floor skipped: not enough to your ' + name); return null; }
+    beep(990, 0.1);
+    edges[name] = res.edge;
+  }
+  const width = edges.right - edges.left;
+  if (width < 0.5) { say('Floor skipped, move further each way.'); note('Floor skipped: under half a meter wide'); return null; }
+  return {floor:{left:edges.left, right:edges.right, width, center:(edges.left + edges.right)/2}};
 }
 
 async function capturePose(pose){

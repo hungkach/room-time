@@ -125,6 +125,26 @@ for (const [name, fr] of Object.entries(FR)) {
   });
 }
 
+test('the directed shuffle: each edge is where you pause at the far end', () => {
+  // 30 fps: shuffle 1.2 m to your left over 1.5 s, pause 1 s with a little sway
+  const run = (side, path) => { const p = new RT.EdgePass(side); for (const [t, x] of path) { const r = p.push(t, x); if (r) return r; } return p.timeout(); };
+  const path = (to, moveMs, holdMs, sway = 0.01) => {
+    const out = [];
+    for (let t = 0; t <= moveMs + holdMs; t += 33) out.push([t, t < moveMs ? to * t / moveMs : to + sway * Math.sin(t / 50)]);
+    return out;
+  };
+  let r = run(-1, path(-1.2, 1500, 1200));
+  assert.ok(r.paused && Math.abs(r.edge + 1.2) < 0.03, JSON.stringify(r));
+  r = run(1, path(1.35, 1500, 1200));
+  assert.ok(r.paused && Math.abs(r.edge - 1.35) < 0.03, JSON.stringify(r));
+  // a quick touch at the edge and straight back, no pause: the farthest point still counts
+  const touch = []; for (let t = 0; t <= 3000; t += 33) touch.push([t, -1.2 * Math.sin(Math.min(1, t / 1500) * Math.PI)]);
+  r = run(-1, touch);
+  assert.ok(!r.paused && r.edge < -1.1, 'a touch with no pause still reaches the edge: ' + JSON.stringify(r));
+  // standing still at the start never ends the pass, and too little travel gives nothing
+  assert.equal(run(-1, path(0, 0, 3000)), null);
+});
+
 test('calibration keeps medians and per-stance ratios', () => {
   const cal = calFor();
   near(cal.stand.world.hipH, 0.87, 0.001);
