@@ -90,7 +90,8 @@ test('frame check', () => {
   assert.equal(RT.frameCheck(figure({ dist: 2.4 }).lm).ok, true);
   assert.equal(RT.frameCheck(figure({ dist: 0.9 }).lm).hint, 'Step back');
   assert.equal(RT.frameCheck(figure({ dist: 2, x: 2.2 }).lm).hint, 'Move to the middle');
-  assert.equal(RT.frameCheck(figure({ dist: 7 }).lm).hint, 'Step closer');
+  assert.equal(RT.frameCheck(figure({ dist: 12 }).lm).hint, 'Step closer');
+  assert.equal(RT.frameCheck(figure({ hip: 0.55, lean: 0.4, footW: 0.5, dist: 2.4, vfov: 95 }).lm).ok, true, 'a deep stance at 8 ft on the ultra-wide is still in frame');
   assert.equal(RT.frameCheck(null).hint, 'Step into view');
 });
 
