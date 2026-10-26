@@ -19,6 +19,7 @@ export function figure(o = {}) {
     vfov: 80,           // vertical field of view, degrees
     aspect: 4 / 3,      // frame width / height
     mirror: false,      // a mirrored frame (x flipped)
+    handY: null,        // wrist height above the floor (default: just below the shoulders, in front)
     torso: 0.52, shoulderW: 0.4, vis: 0.95,
   }, o);
   const ank = 0.08, Z = p.dist;
@@ -30,8 +31,9 @@ export function figure(o = {}) {
   for (let i = 1; i <= 10; i++) set(i, (i <= 3 || i === 7 || i === 9 ? L : R) * 0.04, sy + 0.24, sz - 0.06);
   set(11, L * p.shoulderW / 2, sy, sz); set(12, R * p.shoulderW / 2, sy, sz);
   set(13, L * p.elbowOut, sy - 0.26, sz - 0.12); set(14, R * p.elbowOut, sy - 0.26, sz - 0.12);
-  set(15, L * 0.12, sy - 0.2, sz - 0.35); set(16, R * 0.12, sy - 0.2, sz - 0.35);
-  for (const [i, s] of [[17, L], [19, L], [21, L], [18, R], [20, R], [22, R]]) set(i, s * 0.12, sy - 0.22, sz - 0.38);
+  const wy = p.handY == null ? sy - 0.2 : p.handY;
+  set(15, L * 0.12, wy, sz - 0.35); set(16, R * 0.12, wy, sz - 0.35);
+  for (const [i, s] of [[17, L], [19, L], [21, L], [18, R], [20, R], [22, R]]) set(i, s * 0.12, wy - 0.02, sz - 0.38);
   set(23, L * 0.1, p.hip, Z); set(24, R * 0.1, p.hip, Z);
   const zl = Z - p.stagger, zr = Z;
   set(25, L * p.footW / 2, (p.hip + ank) / 2, zl - 0.12); set(26, R * p.footW / 2, (p.hip + ank) / 2, zr - 0.12);
@@ -51,15 +53,15 @@ export function figure(o = {}) {
 }
 
 // A trace of scripted poses over time. script: [{ms, label, ...figure options}]; each key holds
-// until the next, with a 200 ms ramp into it. Labels cover each hold, 250 ms clear of the ramps.
+// until the next, with a ramp into it (200 ms, or the key's own `ramp` in ms). Labels cover each hold, 250 ms clear of the ramps.
 export function trace(script, opts = {}, fps = 30) {
-  const ramp = 200, frames = [], end = script[script.length - 1].ms;
+  const frames = [], end = script[script.length - 1].ms;
   for (let t = 0; t <= end; t += 1000 / fps) {
     let k = 0;
     while (k + 1 < script.length && script[k + 1].ms <= t) k++;
-    const a = script[k], b = script[k + 1], key = {};
+    const a = script[k], b = script[k + 1], key = {}, ramp = b && b.ramp ? b.ramp : 200;
     for (const n of Object.keys(a)) {
-      if (n === 'ms' || n === 'label') continue;
+      if (n === 'ms' || n === 'label' || n === 'ramp') continue;
       key[n] = b && typeof b[n] === 'number' && t > b.ms - ramp ? a[n] + ((b[n] - a[n]) * (t - (b.ms - ramp))) / ramp : a[n];
     }
     const fr = figure(Object.assign({}, opts, key));

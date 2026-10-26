@@ -111,6 +111,13 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 }
 @media (prefers-reduced-motion:reduce){.move{transition:none}}
 
+/* camera play: the tracker drives the game; a small preview of the camera, the move buttons as a backup */
+#pip{position:absolute;right:10px;bottom:10px;width:min(26%,200px);aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:#000;display:none;pointer-events:none;opacity:.85}
+#game.cam #pip{display:block}
+#game.cam #pad{display:none}
+#game.cam #deck{height:64px;grid-template-columns:1fr}
+#game.cam #btns{grid-template-rows:none;grid-template-columns:repeat(3,1fr)}
+
 /* camera check (Phase 0) */
 .actions.one{grid-template-columns:1fr}
 #lab{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;padding-block:8px 10px}
@@ -197,7 +204,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       <button class="primary" id="startBtn">Start session</button>
       <button class="secondary" id="autoBtn">Watch auto-play</button>
     </div>
-    <div class="actions one"><button class="secondary" id="labBtn">Camera check</button></div>
+    <div class="actions"><button class="primary" id="camPlayBtn">Camera play</button><button class="secondary" id="labBtn">Camera check</button></div>
 
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
@@ -224,7 +231,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       <button class="ibtn" id="muteBtn" aria-label="Mute"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path id="muteWave" d="M16.5 8.5a5 5 0 0 1 0 7"/></svg></button>
       <button class="ibtn" id="endBtn" aria-label="End session"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
-    <div id="stage"><canvas id="cv3d"></canvas><canvas id="cv"></canvas></div>
+    <div id="stage"><canvas id="cv3d"></canvas><canvas id="cv"></canvas><div id="pip"></div></div>
     <div id="deck">
       <div id="pad">
         <div id="padBand"><em>stance</em></div>
@@ -268,6 +275,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         </div>
         <select class="lsel" id="labCam" hidden aria-label="Camera"></select>
         <div class="lcard"><h3>Live</h3>
+          <div id="liveMove" class="verdict">Moves: shoot, sprawl or snap to test them.</div>
           <div class="seg c3" id="liveSrc"><button data-v="world">World<small>hip height</small></button><button data-v="imgS">Image ÷ S<small>hip height</small></button><button data-v="img">Image<small>hip height</small></button></div>
           <div id="liveOut">Start the camera.</div></div>
         <div class="lcard"><h3>Calibration</h3><div id="calOut"></div>
@@ -313,11 +321,16 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   function space(list, sx){
     const q = i => { const p = P(list[i]); return {x:p.x*sx, y:p.y}; };
     const lS = q(11), rS = q(12), lE = q(13), rE = q(14), lH = q(23), rH = q(24), lA = q(27), rA = q(28);
+    const nose = q(0), wM = mid(q(15), q(16));
     const sM = mid(lS, rS), hM = mid(lH, rH), aM = mid(lA, rA);
-    const dir = Math.sign(rS.x - lS.x) || 1;
+    const dir = Math.sign(rS.x - lS.x) || 1, T = dist(sM, hM);
     return {
       S: dist(lS, rS),                 // shoulder width
-      T: dist(sM, hM),                 // torso length
+      T,                               // torso length
+      hipW: dist(lH, rH),              // hip width: grows when you step in, shrinks when the hips go back
+      noseH: aM.y - nose.y,            // head height above the ankles
+      headX: (nose.x - hM.x)*dir,      // head out over the hips, toward the player's right
+      wristH: (hM.y - wM.y)/T,         // hands above the hips in torso lengths (shoulders about 1)
       hipH: aM.y - hM.y,               // hip midpoint above the ankle midpoint
       footW: Math.abs(rA.x - lA.x),    // ankle to ankle, across
       elbowL: (sM.x - lE.x)*dir,       // each elbow out from the shoulder midpoint
@@ -384,6 +397,12 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     if (cal.square) out.level = RT.levelFromRatio(out.ratios[src], cal.square.ratios[src]);
     out.zone = RT.stanceZone(out.level);
     out.floorX = RT.floorX(m.hipX, cal);
+    // head height against standing (your eyes in the 3D view), from the same source as the hips
+    const st = cal.stand;
+    const head = {img: m.img.noseH/st.img.noseH, imgS: (m.img.noseH/m.img.S)/(st.img.noseH/st.img.S),
+      world: m.world && st.world ? m.world.noseH/st.world.noseH : null}[src];
+    out.headRatio = num(head) && head > 0 ? head : null;
+    out.headX = m.world ? m.world.headX : m.img.headX/m.img.S*0.4;  // meters
     return out;
   };
 
@@ -435,6 +454,57 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     if (bot - top < 0.15) return {ok:false, hint:'Step closer'}; // a deep stance at 8 ft fills only about 0.23
     return {ok:true, hint:''};
   };
+
+  // One Euro filter (Casiez et al. 2012), from body-arcade engine/one-euro.js at 12ef6b8.
+  RT.OneEuro = class {
+    constructor(minCutoff = 1.5, beta = 0.5, dCutoff = 1.0){ this.minCutoff = minCutoff; this.beta = beta; this.dCutoff = dCutoff; this.x = null; this.dx = 0; this.t = null; }
+    filter(v, tSec){
+      if (!num(v)) return this.x;
+      if (this.x === null) { this.x = v; this.t = tSec; return v; }
+      const a = (c, dt) => 1/(1 + 1/(2*Math.PI*c*dt)), dt = Math.max(tSec - this.t, 1e-3);
+      this.t = tSec;
+      this.dx += a(this.dCutoff, dt)*((v - this.x)/dt - this.dx);
+      this.x += a(this.minCutoff + this.beta*Math.abs(this.dx), dt)*(v - this.x);
+      return this.x;
+    }
+  };
+
+  // Shot, sprawl and snap from the camera, in the player's own level units.
+  //   shot:   a fast level drop while closing in (hip width grows on screen as you step in)
+  //   sprawl: a bigger, deeper drop with the hips going back (hip width holds or shrinks)
+  //   snap:   hands come down fast from tie height to the belt while the level holds
+  // A drop is judged once the level has stopped falling for settleMs. Pure: feed it frames, it returns moves.
+  RT.MOVES = {windowMs:1200, maxDropMs:650, settleMs:90, minDrop:0.2, shotGrow:0.07, sprawlLevel:0.24, sprawlDrop:0.26,
+    snapFrom:0.6, snapTo:0.25, snapMs:500, snapHold:0.15, refractoryMs:900};
+  RT.MoveDetector = class {
+    constructor(opts){ this.o = Object.assign({}, RT.MOVES, opts || {}); this.h = []; this.last = -1e9; }
+    // s: {t: ms, level, hipW, wristH}; returns {type, from, to, ms, grow} or null
+    push(s){
+      const o = this.o, h = this.h;
+      if (!s || !num(s.level)) return null;
+      h.push(s); while (h.length && s.t - h[0].t > o.windowMs) h.shift();
+      if (s.t - this.last < o.refractoryMs) return null;
+      // the lowest point so far, and the highest point before it
+      let lo = h[0]; for (const x of h) if (x.level < lo.level - 0.005) lo = x;   // the first time it got this low
+      let top = lo; for (const x of h) { if (x.t >= lo.t) break; if (x.level > top.level) top = x; }
+      const drop = top.level - lo.level, ms = lo.t - top.t;
+      if (drop >= o.minDrop && ms <= o.maxDropMs && s.t - lo.t >= o.settleMs) {
+        const grow = num(lo.hipW) && num(top.hipW) && top.hipW > 0 ? lo.hipW/top.hipW - 1 : 0;
+        let type = null;
+        if (grow >= o.shotGrow) type = 'shot';
+        else if (lo.level <= o.sprawlLevel && drop >= o.sprawlDrop && grow <= 0.02) type = 'sprawl';
+        if (type) return this.fire(s, {type, from:top.level, to:lo.level, ms, grow});
+      }
+      // snap: hands from tie height to the belt, fast, level held
+      let hi = null; for (const x of h) if (num(x.wristH) && (!hi || x.wristH >= hi.wristH - 0.02)) hi = x;   // the latest high point
+      if (hi && num(s.wristH) && hi.wristH >= o.snapFrom && s.wristH <= o.snapTo && s.t - hi.t <= o.snapMs && Math.abs(s.level - hi.level) <= o.snapHold)
+        return this.fire(s, {type:'snap', from:hi.wristH, to:s.wristH, ms:s.t - hi.t, grow:0});
+      return null;
+    }
+    fire(s, ev){ this.last = s.t; this.h = [s]; return ev; }
+  };
+  // The detector's inputs from one frame's measures and readouts.
+  RT.moveInput = (t, m, r) => m && r && num(r.level) ? {t, level:r.level, hipW:m.img.hipW, wristH:m.img.wristH} : null;
 
   // Timestamps for detectForVideo must strictly increase.
   RT.nextTs = (last, now) => now > last ? now : last + 1;
@@ -581,7 +651,8 @@ function resize(){
 }
 window.addEventListener('resize', resize);
 
-function startSession(auto){
+// cam: camera play, where the tracker (rt-lab-tools) writes S.cam {level, floorX, head, seen} every frame
+function startSession(auto, cam){
   ensureAudio();
   const P = PACE[settings.pace];
   S = {
@@ -595,9 +666,11 @@ function startSession(auto){
     rounds:[], goes:[], score:{you:0, opp:0},
     callout:null, coachLine:null, lastCorrection:-99, hiT:0, loT:0, lastMoveT:0,
     bot:{q:[], drift:0, lapseUntil:0, dipUntil:0, vxUntil:0, vxDir:0}, R:null, restNote:'',
-    skipRest:false, lastCutT:-9, pressOff:0, pressDir:1
+    skipRest:false, lastCutT:-9, pressOff:0, pressDir:1,
+    cam:cam && !auto ? {level:null, floorX:null, head:null, seen:false} : null, camOff:0
   };
   $('menu').hidden = true; $('debrief').hidden = true; $('game').hidden = false;
+  $('game').classList.toggle('cam', !!S.cam);
   $('padHint').hidden = auto; $('padDot').hidden = true;
   requestAnimationFrame(() => { resize(); });
   say('Room time.', true);
@@ -607,7 +680,9 @@ function startSession(auto){
 function quit(){
   try { speechSynthesis.cancel(); } catch(e) {}
   try { wakeLock && wakeLock.release(); } catch(e) {}
+  const wasCam = S && S.cam;
   S = null; $('game').hidden = true; $('debrief').hidden = true; $('menu').hidden = false; renderMenu();
+  if (wasCam && globalThis.RoomTimeGame.onQuit) globalThis.RoomTimeGame.onQuit();
 }
 
 function roundTitle(rd){
@@ -721,7 +796,7 @@ function liveUpdate(dt){
     }
     case 'press':
       // he drives you toward the nearer wall; hold a move back toward center to circle off
-      S.youX = clamp(S.youX + S.pressDir*0.38*dt, -1, 1);
+      if (S.cam) S.camOff += S.pressDir*0.38*dt; else S.youX = clamp(S.youX + S.pressDir*0.38*dt, -1, 1);
       o.x = lerp(o.x, S.youX + S.pressDir*0.1, Math.min(1, dt*3));
       if (S.vx*S.pressDir < -0.35) S.pressOff += dt; else S.pressOff = Math.max(0, S.pressOff - dt);
       if (S.pressOff > 0.5) { callout('Circled off', 'back to center', 'good'); sfx.blip(); setOpp('circle', rand(...S.P.decide)); }
@@ -735,8 +810,12 @@ function liveUpdate(dt){
     case 'stuffed': case 'snapped': if (o.t > o.dur) { callout('Reset', 'no go-behind', 'info'); setOpp('reset', 1.2); } break;
     case 'reset':
       // whistle reset: both wrestlers walk back to center, like a real restart
-      o.x = lerp(o.x, 0, Math.min(1, dt*3)); S.youX = lerp(S.youX, 0, Math.min(1, dt*2.5));
-      if (o.t > o.dur) setOpp('circle', rand(...S.P.decide));
+      o.x = lerp(o.x, 0, Math.min(1, dt*3));
+      if (!S.cam) S.youX = lerp(S.youX, 0, Math.min(1, dt*2.5));
+      else S.camOff = lerp(S.camOff, 0, Math.min(1, dt*2));
+      // with a camera you walk back to the middle yourself before the restart
+      if (o.t > o.dur && (!S.cam || Math.abs(S.youX) < 0.35)) setOpp('circle', rand(...S.P.decide));
+      else if (S.cam && o.t > o.dur && o.t - o.dur < 0.05) callout('Back to center', '', 'info');
       break;
   }
   if (o.state !== 'reset' && Math.abs(S.youX) >= 0.97) {
@@ -855,10 +934,11 @@ function emit(type){
   if (S.plan[S.r].phase === 'live') liveInput(type); else drillInput(type);
 }
 const ACT = {sprawl:{dur:0.38}, shot:{dur:0.46}, snap:{dur:0.26}};
-function act(type){
+// pre: the level before the move (a camera move is read after the drop, so it brings its own)
+function act(type, pre){
   if (!S || S.mode !== 'work' || S.paused) return;
   if (S.action && S.time - S.action.t0 < S.action.dur) return;
-  S.preLevel = S.level;
+  S.preLevel = pre == null ? S.level : pre;
   S.action = {type, t0:S.time, dur:ACT[type].dur};
   if (type !== 'snap') S.explosive++;
   const btn = {sprawl:'bSprawl', shot:'bShot', snap:'bSnap'}[type];
@@ -971,12 +1051,28 @@ function updateBody(dt){
   }
   let target = S.padActive ? S.padTarget : 1.0;
   if (S.time < S.bot.dipUntil) target = Math.max(0.08, target - 0.24);
-  if (S.action) { if (S.action.type === 'sprawl') target = 0.1; else if (S.action.type === 'shot') target = 0.18; }
-  const rate = S.action ? 16 : (S.padActive ? 13 : 4);
+  if (S.action && !S.cam) { if (S.action.type === 'sprawl') target = 0.1; else if (S.action.type === 'shot') target = 0.18; }
+  let rate = S.action ? 16 : (S.padActive ? 13 : 4);
+  const C = S.cam;
+  if (C) {
+    // camera play: your own level and floor position, already smoothed by the tracker
+    if (C.level != null) { target = C.level; S.padActive = true; }
+    else target = S.level;
+    rate = 20;
+  }
   S.level += (target - S.level)*Math.min(1, dt*rate);
-  S.youX = clamp(S.youX + S.vx*dt*0.9, -1, 1);
-  if (S.vx > 0.45 && !S.latchR) { S.latchR = true; emit('right'); } else if (S.vx < 0.2) S.latchR = false;
-  if (S.vx < -0.45 && !S.latchL) { S.latchL = true; emit('left'); } else if (S.vx > -0.2) S.latchL = false;
+  let latch = 0.45, unlatch = 0.2;
+  if (C) {
+    if (C.floorX != null) {
+      const prev = C.lastFx == null ? C.floorX : C.lastFx; C.lastFx = C.floorX;
+      S.vx += (clamp((C.floorX - prev)/Math.max(dt, 1e-3)/0.9, -1.5, 1.5) - S.vx)*Math.min(1, dt*10);
+      S.youX = clamp(C.floorX + S.camOff, -1, 1);
+    }
+    S.camOff *= Math.exp(-dt*0.35);   // his drive fades once he stops pressing
+    latch = 0.3; unlatch = 0.12;        // a real shuffle step is slower than a thumb swipe
+  } else S.youX = clamp(S.youX + S.vx*dt*0.9, -1, 1);
+  if (S.vx > latch && !S.latchR) { S.latchR = true; emit('right'); } else if (S.vx < unlatch) S.latchR = false;
+  if (S.vx < -latch && !S.latchL) { S.latchL = true; emit('left'); } else if (S.vx > -unlatch) S.latchL = false;
   S.hist.push([S.time, S.level]); while (S.hist.length && S.time - S.hist[0][0] > 0.36) S.hist.shift();
   if (!S.action && S.time - S.lastLevelEvt > 0.7) {
     let mx = 0; for (const h of S.hist) mx = Math.max(mx, h[1]);
@@ -1011,6 +1107,7 @@ function update(dt){
       else if (rd.phase !== 'live' && Math.abs(S.youX) > 0.85) coach('Edge. Circle back in.');
       else if ((rd.phase === 'warm' || rd.phase === 'tech') && S.time - S.lastMoveT > 9) coach('Feet moving.');
     }
+    if (S.cam && S.cam.seenOnce && !S.cam.seen && S.time - S.lastCorrection > 4) coach('Step into view.');
     if (S.clock <= 0) endWork();
   } else if (S.mode === 'rest') {
     S.opp.t += dt; S.opp.x = lerp(S.opp.x, 0, Math.min(1, dt*2));
@@ -1293,13 +1390,14 @@ function buildDebrief(){
     </div></div>
     <div class="actions"><button class="primary" id="againBtn">Run it again</button><button class="secondary" id="menuBtn">Change session</button></div>`;
   $('debrief').hidden = false; $('debrief').scrollTop = 0;
-  $('againBtn').onclick = () => startSession(S.auto);
+  $('againBtn').onclick = () => startSession(S.auto, !!S.cam);
   $('menuBtn').onclick = quit;
   say(`Session done. In stance ${pct} percent.${reac === null ? '' : ' Reaction ' + Math.round(reac*1000) + ' milliseconds.'}`, true);
 }
 
 // read-only view of the game for the 3D layer and camera play
-globalThis.RoomTimeGame = {get S(){ return S; }, cueGlow:() => S ? cueGlow() : null, BAND, ACT};
+globalThis.RoomTimeGame = {get S(){ return S; }, cueGlow:() => S ? cueGlow() : null, BAND, ACT,
+  start:startSession, camMove:(type, pre) => act(type, pre), onQuit:null};
 
 /* ---------- loop ---------- */
 let lastTs = 0;
@@ -1507,7 +1605,7 @@ function onResult(res, inf, t){
 
 /* ---------- drawing ---------- */
 function fitView(){
-  const st = $('labStage').getBoundingClientRect(), v = $('labView');
+  const v = $('labView'), st = v.parentElement.getBoundingClientRect();
   const a = (video.videoWidth && video.videoHeight) ? video.videoWidth/video.videoHeight : 4/3;
   let w = st.width, h = w/a; if (h > st.height) { h = st.height; w = h*a; }
   v.style.width = w + 'px'; v.style.height = h + 'px';
@@ -1798,7 +1896,7 @@ function renderCal(){
     row('stagger', c.stagger && c.square ? stance(c.stagger) : '-') +
     row('wallL', c.wallL ? `x ${n(c.wallL.hipX, 2)}` : '-') +
     row('wallR', c.wallR ? `x ${n(c.wallR.hipX, 2)}` : '-') +
-    `</div><div>${c.at.slice(0, 16).replace('T', ' ')} · ${c.w}x${c.h} · ${c.model}</div>` +
+    `</div><div>${(c.at || '').slice(0, 16).replace('T', ' ')} · ${c.w}x${c.h} · ${c.model}</div>` +
     (c.w && L.cur && (L.cur.w !== c.w || L.cur.h !== c.h) ? `<div class="verdict bad">The camera picture changed since; calibrate again.</div>` : '');
   $('calSave').hidden = !c;
 }
@@ -1870,6 +1968,59 @@ function renderLive(){
 }
 L.drawers.push(renderLive);
 L.hudLines.push(f => f && f.r ? `level ${n(f.r.level, 2)} ${f.r.zone || ''}  feet ${n(f.r.footWorld, 2)} S  elbows ${n(f.r.elbowL, 2)} ${n(f.r.elbowR, 2)}  floor ${n(f.r.floorX, 2)}` : '');
+L.hudLines.push(f => f && f.r && f.r.headRatio != null ? `head ${n(f.r.headRatio*100)}% of standing  out ${n(f.r.headX*100)} cm` : '');
+
+/* ---------- moves in the camera check ---------- */
+const MOVE_NAME = {shot:'Shot', sprawl:'Sprawl', snap:'Snap'};
+let labDet = new RT.MoveDetector();
+L.on.add(f => {
+  if (play.on) return;
+  const ev = labDet.push(f.m && f.r ? RT.moveInput(f.t, f.m, f.r) : null);
+  if (!ev) return;
+  beep(880, 0.08); say(MOVE_NAME[ev.type]);
+  $('liveMove').textContent = ev.type === 'snap' ? `Snap: hands ${n(ev.from, 2)} to ${n(ev.to, 2)} torso lengths in ${n(ev.ms)} ms`
+    : `${MOVE_NAME[ev.type]}: level ${n(ev.from, 2)} to ${n(ev.to, 2)} in ${n(ev.ms)} ms, stepped in ${n(ev.grow*100)}%`;
+});
+
+/* ---------- camera play ---------- */
+// The game runs from the camera: each frame writes your smoothed level, floor position and head height into
+// the game (S.cam), and the move detector's shots, sprawls and snaps go in as moves.
+const play = {on:false, det:null, fl:null, fx:null, fh:null, fhx:null};
+L.on.add(f => {
+  const G = globalThis.RoomTimeGame, S = G && G.S;
+  if (!play.on || !S || !S.cam) return;
+  const r = f.r, t = f.t/1000;
+  if (!r || r.level == null) { S.cam.seen = false; return; }
+  S.cam.seen = S.cam.seenOnce = true;
+  S.cam.level = play.fl.filter(r.level, t);
+  S.cam.floorX = r.floorX == null ? 0 : play.fx.filter(r.floorX, t);
+  // your eyes: standing eye height times your head height against standing; your head out over your hips moves the view
+  if (r.headRatio != null) S.cam.head = {eye:1.66*play.fh.filter(r.headRatio, t), dx:play.fhx.filter(r.headX || 0, t), roll:0};
+  const ev = play.det.push(RT.moveInput(f.t, f.m, r));
+  if (ev && S.mode === 'work') G.camMove(ev.type, ev.from);
+});
+function dock(on){
+  const v = $('labView');
+  (on ? $('pip') : $('labStage')).prepend(v);
+  requestAnimationFrame(globalThis.RoomTimeLab.fitView);
+}
+async function startCamPlay(){
+  globalThis.RoomTimeLab.unlockAudio();
+  if (!cal || !cal.stand || !cal.square || !cal.wallL || !cal.wallR) {
+    $('menu').hidden = true; $('lab').hidden = false; globalThis.RoomTimeLab.fitView();
+    status('Calibrate first: start the camera, then Calibrate');
+    say('Calibrate first.');
+    return;
+  }
+  Object.assign(play, {on:true, det:new RT.MoveDetector(), fl:new RT.OneEuro(1.5, 0.6), fx:new RT.OneEuro(1.0, 0.4), fh:new RT.OneEuro(1.5, 0.6), fhx:new RT.OneEuro(1.0, 0.4)});
+  dock(true);
+  globalThis.RoomTimeGame.start(false, true);
+  await globalThis.RoomTimeLab.startCamera();
+  if (!L.src) { play.on = false; dock(false); say('The camera did not start. Try Camera check.'); }
+}
+globalThis.RoomTimeGame.onQuit = () => { play.on = false; globalThis.RoomTimeLab.stopSource(); dock(false); };
+$('camPlayBtn').addEventListener('click', startCamPlay);
+globalThis.RoomTimeLab.play = play;
 
 /* ---------- recording and video files ---------- */
 // Record: the camera video through MediaRecorder plus a landmark trace on the same clock (ms from the
@@ -2387,7 +2538,7 @@ R3.debug = {opp, camera, scene, THREE};
 // p: pelvis lean, sp/ch: spine and chest, nk/hd: neck and head (negative looks up), z: lunge toward you.
 const BASE = {p:0.72, sp:0.14, ch:0.08, nk:-0.7, hd:-0.25, z:0, x:0,
   la1:1.2, la2:-0.5, lab:0.24, ra1:0.75, ra2:-0.75, rab:0.24,
-  lsf:0.95, lsa:0.3, lst:-0.3, le:1.25, rsf:0.85, rsa:0.32, rst:0.3, re:1.3};
+  lsf:0.95, lsa:0.3, lst:-0.3, le:0.85, rsf:0.85, rsa:0.32, rst:0.3, re:0.95};
 const P = (o) => Object.assign({}, BASE, o);
 const POSES = {
   stance: P({}),
@@ -2455,9 +2606,11 @@ function applyPose(O, q, wx, wz, faceYaw, time, moving){
 const you = {};
 for (const [side, s] of [['L', -1], ['R', 1]]) {
   const el = new THREE.Object3D(); camera.add(el);
-  part(el, lathe(0.3, t => 0.05 + 0.006*bump(t, 0.25, 0.15) - 0.016*t, {cap:0.12}), SKIN_YOU, 1.1, 0.9);
+  part(el, lathe(0.3, t => 0.052 + 0.008*bump(t, 0.25, 0.15) - 0.014*t, {cap:0.12}), SKIN_YOU, 1.12, 0.9);
   const wr = new THREE.Object3D(); wr.position.y = -0.3; el.add(wr);
-  part(wr, lathe(0.17, t => 0.034 + 0.006*bump(t, 0.4, 0.2) - 0.012*t, {cap:0.3}), SKIN_YOU, 1.35, 0.7);
+  // a loose fist
+  const fist = new THREE.Mesh(new THREE.SphereGeometry(0.05, 24, 16), SKIN_YOU); fist.scale.set(0.95, 1.15, 0.8); fist.position.y = -0.045; wr.add(fist);
+  const knuckles = new THREE.Mesh(new THREE.CapsuleGeometry(0.02, 0.05, 6, 12), SKIN_YOU); knuckles.rotation.z = Math.PI/2; knuckles.position.set(0, -0.085, 0.012); wr.add(knuckles);
   you[side] = {el, s};
 }
 const tmpV = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);

@@ -96,6 +96,24 @@ try {
   await page.waitForFunction(() => globalThis.RoomTime3D && RoomTime3D.ok, null, { timeout: 30000 }).catch(() => {});
   const r3 = await page.evaluate(() => ({ ok: RoomTime3D.ok, ms: RoomTime3D.buildMs }));
   check(r3.ok, `3D view renders (body built in ${r3.ms} ms)`);
+
+  // camera play with the synthetic figure: the tracker drives level, floor and eye height; a shot comes in as a move
+  await page.click('#endBtn');
+  await page.click('#camPlayBtn');
+  await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
+  await page.evaluate(() => { window.__moves = []; const orig = RoomTimeGame.camMove; RoomTimeGame.camMove = (t, p) => { window.__moves.push(t); orig(t, p); }; });
+  const camState = async (p, ms = 1500) => { await pose(p); await page.waitForTimeout(ms); return page.evaluate(() => { const S = RoomTimeGame.S; return { level: S.level, x: S.youX, eye: S.cam.head && S.cam.head.eye, moves: window.__moves.join(',') }; }); };
+  let c = await camState({ ...POSE['Square stance'], dist: 2.0 });
+  check(Math.abs(c.level - 0.45) < 0.05, 'camera play: stance drives the level: ' + c.level.toFixed(2));
+  c = await camState({ ...POSE.Standing, dist: 2.0 });
+  check(c.level > 0.9 && c.eye > 1.55, `camera play: standing raises level and eyes (${c.level.toFixed(2)}, ${c.eye.toFixed(2)} m)`);
+  c = await camState({ ...POSE['Square stance'], x: -0.7, dist: 2.0 });
+  check(c.x > 0.5, 'camera play: moving toward the right wall moves you on the floor: ' + c.x.toFixed(2));
+  await camState({ ...POSE['Square stance'], dist: 2.0 });
+  c = await camState({ hip: 0.42, footW: 0.55, lean: 0.6, dist: 1.5 }, 1200);
+  check(c.moves === 'shot', 'camera play: a drop stepping in is a shot: ' + c.moves);
+  await page.click('#endBtn'); await page.waitForTimeout(300);
+  check(await page.evaluate(() => RoomTimeLab.L.src) === null, 'leaving camera play stops the camera');
 } finally {
   await browser.close(); server.close();
 }
