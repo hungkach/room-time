@@ -33,6 +33,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 .brand h1{font-family:var(--f-display);font-weight:700;font-size:3.6rem;line-height:.88;margin:0;letter-spacing:.005em}
 .brand h1 span{color:var(--red)}
 .brand p{margin:8px 0 0;color:var(--muted);font-size:1rem}
+#r3note{font-size:.8rem;color:var(--amber)}
 .field{display:flex;flex-direction:column;gap:8px}
 .field .lab{font-size:.85rem;color:var(--muted);letter-spacing:.02em;font-weight:500}
 .seg{display:grid;gap:6px}
@@ -161,6 +162,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     <div class="brand">
       <h1>Room <span>Time</span></h1>
       <p>Wrestling training simulator. Touch prototype: the pad stands in for your hips and feet, the buttons for your big moves.</p>
+      <p id="r3note" hidden></p>
     </div>
 
     <div class="field">
@@ -496,12 +498,16 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   // pause at the far end: once you've traveled minTravel that way and held within stillM for pauseMs, at the farthest
   // point you've reached, the edge is the median of the pause. If time runs out first, timeout() gives the farthest
   // you got (the 5th or 95th percentile, so one stray frame doesn't count). Meters, + toward your right.
-  RT.EDGE = {minTravel:0.3, pauseMs:800, stillM:0.05, nearFar:0.1};
+  // positions are smoothed (median of the last 5) before the pause test: the camera's frame-to-frame jitter in meters
+  // is several centimeters, more than a 5 cm stillness test allows
+  RT.EDGE = {minTravel:0.3, pauseMs:700, stillM:0.12, nearFar:0.15, smooth:5};
   RT.EdgePass = class {
-    constructor(side, opts){ this.side = side; this.o = Object.assign({}, RT.EDGE, opts || {}); this.xs = []; this.x0 = null; this.far = null; }
+    constructor(side, opts){ this.side = side; this.o = Object.assign({}, RT.EDGE, opts || {}); this.xs = []; this.raw = []; this.x0 = null; this.far = null; }
     push(t, X){
       if (!num(X)) return null;
       const o = this.o, sd = this.side;
+      this.raw.push(X); if (this.raw.length > o.smooth) this.raw.shift();
+      X = RT.median(this.raw);
       if (this.x0 == null) { this.x0 = X; this.far = X; }
       if (sd*(X - this.far) > 0) this.far = X;
       this.xs.push([t, X]);
@@ -1572,6 +1578,16 @@ function buildDebrief(){
   say(`Session done. In stance ${pct} percent.${reac === null ? '' : ' Reaction ' + Math.round(reac*1000) + ' milliseconds.'}`, true);
 }
 
+// A line on the menu when the 3D view can't run on this device, with the reason and the Safari version, so it can be fixed.
+function check3d(){
+  const R = globalThis.RoomTime3D, v = (navigator.userAgent.match(/Version\/([\d.]+)/) || [])[1];
+  const why = !R ? 'the 3D library did not load' : R.error;
+  if (!why) return;
+  $('r3note').textContent = `3D view off on this device: ${why}${v ? ' (Safari ' + v + ')' : ''}. The flat view runs instead.`;
+  $('r3note').hidden = false;
+}
+setTimeout(check3d, 8000);
+
 // read-only view of the game for the 3D layer and camera play
 globalThis.RoomTimeGame = {get S(){ return S; }, get settings(){ return settings; }, cueGlow:() => S ? cueGlow() : null, BAND, ACT,
   start:startSession, camMove:(type, pre) => act(type === 'down_block' ? 'block' : type, pre), onQuit:null,
@@ -2043,8 +2059,8 @@ L.cal = cal;
 async function captureSweep(){
   note('Calibrate: Floor');
   const edges = {};
-  for (const [side, name, line] of [[-1, 'left', 'Shuffle to your left in your stance, until it beeps or you reach your wall. Pause there.'],
-                                    [1, 'right', 'Now all the way to your right. Pause there.']]) {
+  for (const [side, name, line] of [[-1, 'left', 'Shuffle to your left in your stance, to your wall or until it beeps. Pause there.'],
+                                    [1, 'right', 'Now all the way to your right, to your wall. Pause there.']]) {
     say(line); note('Floor: to your ' + name);
     if (!await wait(1200, 'cal')) return null;
     const pass = new RT.EdgePass(side), t0 = now();
@@ -2059,8 +2075,9 @@ async function captureSweep(){
     L.on.delete(fn);
     if (!res) res = pass.timeout();
     if (!res) { say('Floor skipped, move further each way.'); note('Floor skipped: not enough to your ' + name); return null; }
-    beep(990, 0.1);
+    beep(990, 0.1); say(name === 'left' ? 'Left edge set.' : 'Right edge set.');
     edges[name] = res.edge;
+    if (!await wait(900, 'cal')) return null;
   }
   const width = edges.right - edges.left;
   if (width < 0.5) { say('Floor skipped, move further each way.'); note('Floor skipped: under half a meter wide'); return null; }
@@ -2430,9 +2447,9 @@ const ease = t => { t = clamp(t, 0, 1); return t*t*(3 - 2*t); };
 let renderer = null;
 try {
   renderer = new THREE.WebGLRenderer({canvas, antialias:true, powerPreference:'high-performance'});
-} catch(e) { console.warn('Room Time: 3D unavailable, staying 2D', e); }
+} catch(e) { console.warn('Room Time: 3D unavailable, staying 2D', e); R3.error = 'no WebGL: ' + e.message; }
 
-if (renderer) {
+if (renderer) try {
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
@@ -3008,11 +3025,11 @@ function frame(ms){
 
   if (R3.debug.cam) R3.debug.cam(camera, opp);
   try { renderer.render(scene, camera); }
-  catch(e) { console.warn('Room Time: 3D render failed, back to 2D', e); R3.ok = false; R3.failed = true; return; }
+  catch(e) { console.warn('Room Time: 3D render failed, back to 2D', e); R3.ok = false; R3.failed = true; R3.error = 'render: ' + e.message; return; }
   R3.ok = true;
 }
 requestAnimationFrame(frame);
-}
+} catch(e) { console.warn('Room Time: 3D setup failed, staying 2D', e); R3.error = 'setup: ' + e.message; }
 </script>
 </body>
 </html>

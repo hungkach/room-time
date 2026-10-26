@@ -141,6 +141,11 @@ test('the directed shuffle: each edge is where you pause at the far end', () => 
   const touch = []; for (let t = 0; t <= 3000; t += 33) touch.push([t, -1.2 * Math.sin(Math.min(1, t / 1500) * Math.PI)]);
   r = run(-1, touch);
   assert.ok(!r.paused && r.edge < -1.1, 'a touch with no pause still reaches the edge: ' + JSON.stringify(r));
+  // camera jitter of a few centimeters during the pause still reads as a pause
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5);
+  const noisy = path(-1.2, 1500, 1500).map(([t, x]) => [t, x + rnd() * 0.08]);
+  r = run(-1, noisy);
+  assert.ok(r.paused && Math.abs(r.edge + 1.2) < 0.05, 'noisy pause: ' + JSON.stringify(r));
   // standing still at the start never ends the pass, and too little travel gives nothing
   assert.equal(run(-1, path(0, 0, 3000)), null);
 });
