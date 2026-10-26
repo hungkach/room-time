@@ -58,7 +58,7 @@ try {
   const fig = readFileSync(path.join(ROOT, 'test/helpers/figure.mjs'), 'utf8').replace(/^export /gm, '');
   await page.addScriptTag({ content: fig + '\nwindow.figure = figure;' });
   await page.evaluate(() => {
-    window.__pose = { hip: 0.95, footW: 0.3, lean: 0.05, dist: 2.0, vfov: 90 };
+    window.__pose = { hip: 0.95, footW: 0.3, lean: 0.05, dist: 2.0, vfov: 94 }; // the iPad front ultra-wide's 4:3 field of view
     const obj = (a) => a.map(([x, y, z, v]) => ({ x, y, z, visibility: v }));
     RoomTimeLab.L.lmk = { detectForVideo() { const f = figure(window.__pose); return { landmarks: [obj(f.lm)], worldLandmarks: [obj(f.wl)] }; }, close() {} };
   });
@@ -77,7 +77,7 @@ try {
       const m = (await page.textContent('#labStatus')).match(/Calibrate: (.*)/);
       if (m && !seen.has(m[1])) {
         seen.add(m[1]);
-        if (m[1] === 'Walls') { await pose(POSE['Square stance']); await sweep(true); }
+        if (m[1] === 'Floor') { await pose(POSE['Square stance']); await sweep(true); }
         else if (POSE[m[1]]) { await sweep(false); await pose(POSE[m[1]]); }
       }
       await page.waitForTimeout(150);
@@ -90,14 +90,17 @@ try {
   await page.click('#calBtn');
   const cues = await followCues(async () => await page.textContent('#calBtn') === 'Calibrate');
   const cal = await page.evaluate(() => RoomTimeLab.L.cal);
-  check(cal && ['stand', 'square', 'stagger', 'wallL', 'wallR'].every((k) => cal[k]), 'calibrated: three holds and the walls from the sweep (' + cues.join(', ') + ')');
+  check(cal && ['stand', 'square', 'stagger', 'floor'].every((k) => cal[k]), 'calibrated: three holds and the floor from the shuffle (' + cues.join(', ') + ')');
+  check(Math.abs(cal.floor.width - 2.0) < 0.15, `the shuffle measured the floor in meters: ${cal.floor.width.toFixed(2)} m (moved 2.1 m)`);
+  check(Math.abs(cal.square.D - 2.0) < 0.1, `distance from the iPad: ${cal.square.D.toFixed(2)} m (stood at 2.0)`);
 
   // live readouts
   const live = async (p) => { await pose(p); await page.waitForTimeout(800); return page.evaluate(() => RoomTimeLab.L.cur.r); };
   let r = await live(POSE.Standing); check(r.zone === 'tall', 'standing reads tall');
   r = await live(POSE['Square stance']); check(r.zone === 'stance' && Math.abs(r.level - 0.45) < 0.03, 'square stance reads stance at 0.45: ' + r.level.toFixed(2));
   r = await live({ hip: 0.42, footW: 0.5, lean: 0.4 }); check(r.zone === 'deep', 'a deep drop reads deep');
-  r = await live({ ...POSE['Square stance'], x: 1.0 }); check(Math.abs(r.floorX + 1) < 0.05, 'left wall is floor -1: ' + r.floorX.toFixed(2));
+  r = await live({ ...POSE['Square stance'], x: 1.0 }); check(Math.abs(r.floorX + 1) < 0.08, 'your left edge is floor -1: ' + r.floorX.toFixed(2));
+  r = await live({ ...POSE['Square stance'], x: -0.6, dist: 1.6 }); check(Math.abs(r.X - 0.6) < 0.04 && Math.abs(r.z + 0.4) < 0.06, `0.6 m right and 0.4 m forward reads ${r.X.toFixed(2)} m and ${r.z.toFixed(2)} m`);
 
   // recording
   await page.click('#recBtn'); await page.waitForTimeout(2500); await page.click('#recBtn');
@@ -115,15 +118,15 @@ try {
   // camera play with the synthetic figure: the warm-up calibration, walls from the warm-in's circling,
   // then the tracker drives level, floor and eye height, and a shot comes in as a move
   await page.click('#endBtn');
-  await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('roomtime.cal')); delete c.wallL; delete c.wallR; localStorage.setItem('roomtime.cal', JSON.stringify(c)); });
+  await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('roomtime.cal')); delete c.floor; localStorage.setItem('roomtime.cal', JSON.stringify(c)); });
   await page.click('#camPlayBtn');
   await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
   check(await page.evaluate(() => RoomTimeGame.S.mode) === 'calib', 'camera play opens with the warm-up calibration');
   const holds = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
-  check(await page.evaluate(() => RoomTimeGame.S.mode) === 'work' && holds.join() === 'Standing,Square stance,Staggered stance', 'then the warm-in starts: ' + holds.join(', '));
-  await sweep(true); await page.waitForTimeout(6000); await sweep(false);
-  const walls = await page.evaluate(() => RoomTimeLab.L.cal.wallL && [RoomTimeLab.L.cal.wallL.hipX, RoomTimeLab.L.cal.wallR.hipX]);
-  check(!!walls, 'the warm-in circling set the walls: ' + JSON.stringify(walls));
+  check(await page.evaluate(() => RoomTimeGame.S.mode) === 'work' && holds.join() === 'Standing,Square stance,Staggered stance,Floor', 'then the warm-in starts: ' + holds.join(', '));
+  // (this container renders camera play at about 2 fps, so the short ?fast shuffle catches only part of the floor)
+  const fl = await page.evaluate(() => ({ halfW: RoomTimeGame.S.cam.halfW, floor: RoomTimeLab.L.cal.floor }));
+  check(fl.floor && fl.halfW > 0.4 && Math.abs(fl.halfW - fl.floor.width / 2) < 0.01, `camera play knows the floor: ${fl.halfW.toFixed(2)} m each side`);
   await page.evaluate(() => { window.__moves = []; const orig = RoomTimeGame.camMove; RoomTimeGame.camMove = (t, p) => { window.__moves.push(t); orig(t, p); }; });
   const camState = async (p, ms = 1500) => { await pose(p); await page.waitForTimeout(ms); return page.evaluate(() => { const S = RoomTimeGame.S; return { level: S.level, x: S.youX, eye: S.cam.head && S.cam.head.eye, moves: window.__moves.join(',') }; }); };
   let c = await camState({ ...POSE['Square stance'], dist: 2.0 });
@@ -132,6 +135,8 @@ try {
   check(c.level > 0.9 && c.eye > 1.55, `camera play: standing raises level and eyes (${c.level.toFixed(2)}, ${c.eye.toFixed(2)} m)`);
   c = await camState({ ...POSE['Square stance'], x: -0.7, dist: 2.0 });
   check(c.x > 0.5, 'camera play: moving toward the right wall moves you on the floor: ' + c.x.toFixed(2));
+  const vx = await page.evaluate(() => RoomTime3D.view.x - RoomTime3D.view.dx), want = 0.7 - fl.floor.center;
+  check(Math.abs(vx - want) < 0.08, `the 3D view moves 1:1: you are ${want.toFixed(2)} m right of your floor's center, the view ${vx.toFixed(2)} m`);
   await camState({ ...POSE['Square stance'], dist: 2.0 });
   c = await camState({ hip: 0.42, footW: 0.55, lean: 0.6, dist: 1.5 }, 1200);
   check(c.moves === 'shot', 'camera play: a drop stepping in is a shot: ' + c.moves);

@@ -69,27 +69,45 @@ test('elbows in vs out', () => {
   near(tucked.elbowLWorld, 0.75, 0.01);
 });
 
-test('floor position runs -1 at the left wall to +1 at the right', () => {
+test('floor position runs -1 at the left edge to +1 at the right, from the shuffle', () => {
   const cal = calFor();
-  near(RT.readouts(M({ hip: 0.62, footW: 0.5, lean: 0.35, x: 1.0 }), cal).floorX, -1, 0.01);
-  near(RT.readouts(M({ hip: 0.62, footW: 0.5, lean: 0.35, x: -1.0 }), cal).floorX, 1, 0.01);
-  near(RT.readouts(M({ hip: 0.62, footW: 0.5, lean: 0.35 }), cal).floorX, 0, 0.01);
+  near(cal.floor.width, 2.0, 0.06, 'the shuffle covered 2.1 m');
+  near(RT.readouts(M({ hip: 0.62, footW: 0.5, lean: 0.35, x: 1.0 }), cal).floorX, -1, 0.03);
+  near(RT.readouts(M({ hip: 0.62, footW: 0.5, lean: 0.35, x: -1.0 }), cal).floorX, 1, 0.03);
+  near(RT.readouts(M({ hip: 0.62, footW: 0.5, lean: 0.35 }), cal).floorX, 0, 0.03);
 });
 
-test('walls come from moving side to side, robust to a stray frame, either mirroring', () => {
-  const xs = Array.from({ length: 200 }, (_, i) => 0.3 + 0.4 * (i / 199));
-  xs.push(0.02, 0.99); // two stray frames
-  const w = RT.wallsFrom(xs, -1); // raw front camera: the player's left shows at larger x
-  assert.ok(Math.abs(w.wallL.hipX - 0.7) < 0.01 && Math.abs(w.wallR.hipX - 0.3) < 0.01, JSON.stringify(w));
-  const m = RT.wallsFrom(xs, 1);
-  assert.ok(m.wallL.hipX < m.wallR.hipX, 'mirrored: left at smaller x');
-  assert.equal(RT.wallsFrom([0.5, 0.52, 0.51], -1), null, 'too little movement sets no walls');
-  const tr = new RT.WallTracker(-1);
-  for (const x of xs.slice(0, 100)) tr.push(x);
-  const a = tr.walls(); for (const x of xs.slice(100)) tr.push(x);
-  const b = tr.walls();
-  assert.ok(b.wallL.hipX > a.wallL.hipX, 'the range widens as the player goes further');
+test('your floor comes from shuffling side to side, in meters, robust to a stray frame', () => {
+  const xs = Array.from({ length: 200 }, (_, i) => -1.4 + 2.8 * (i / 199));
+  xs.push(-3, 3); // two stray frames
+  const f = RT.floorFrom(xs);
+  assert.ok(Math.abs(f.left + 1.4) < 0.07 && Math.abs(f.right - 1.4) < 0.07 && Math.abs(f.width - 2.8) < 0.14, JSON.stringify(f));
+  assert.equal(RT.floorFrom([0.1, 0.2, 0.15]), null, 'too little movement sets no floor');
+  const tr = new RT.FloorTracker({ left: -0.5, right: 0.5, width: 1, center: 0 });
+  for (const x of xs) tr.push(x);
+  assert.ok(tr.floor().width > 2.7, 'the warm-in widens it');
+  const nar = new RT.FloorTracker({ left: -2, right: 2, width: 4, center: 0 });
+  for (const x of xs) nar.push(x);
+  assert.equal(nar.floor().width, 4, 'and never narrows it');
 });
+
+const FR = { '4:3': { vfov: 94 }, '16:9': { aspect: 16 / 9, vfov: 2 * Math.atan(Math.tan(47 * Math.PI / 180) * 0.75) * 180 / Math.PI }, mirrored: { vfov: 94, mirror: true } };
+for (const [name, fr] of Object.entries(FR)) {
+  test(`meters: sideways, distance and eyes match the body (${name})`, () => {
+    const cal = calFor(fr);
+    for (const [x, dist] of [[0, 2.0], [0.6, 2.0], [-0.8, 1.6], [0.3, 2.6]]) {
+      const r = RT.readouts(M({ ...fr, hip: 0.62, footW: 0.5, lean: 0.35, x, dist }), cal);
+      near(r.X, -x, 0.03, `sideways at x ${x} (the player's right is -x)`);
+      near(r.D, dist, 0.06, `distance at ${dist} m`);
+      near(r.z, dist - 1.8, 0.06, 'forward-back from the stance spot (the test calibration stands at 1.8 m)');
+    }
+    const st = RT.readouts(M({ ...fr, dist: 2.0 }), cal);
+    near(st.eye, 0.95 + 0.52 * Math.cos(0.05) + 0.22 + 0.03, 0.06, 'standing eye height');
+    // turning the body doesn't change the meters: a staggered stance at the same spot
+    const turned = RT.readouts(M({ ...fr, hip: 0.66, footW: 0.36, lean: 0.3, stagger: 0.35, x: 0.5, dist: 2.0 }), cal);
+    near(turned.X, -0.5, 0.04, 'staggered');
+  });
+}
 
 test('calibration keeps medians and per-stance ratios', () => {
   const cal = calFor();
