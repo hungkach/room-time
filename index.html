@@ -111,12 +111,11 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 }
 @media (prefers-reduced-motion:reduce){.move{transition:none}}
 
-/* camera play: the tracker drives the game; a small preview of the camera, the move buttons as a backup */
+/* camera play: the tracker drives the game, so no touch deck; a small preview of the camera */
 #pip{position:absolute;right:10px;bottom:10px;width:min(26%,200px);aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:#000;display:none;pointer-events:none;opacity:.85}
 #game.cam #pip{display:block}
-#game.cam #pad{display:none}
-#game.cam #deck{height:64px;grid-template-columns:1fr}
-#game.cam #btns{grid-template-rows:none;grid-template-columns:repeat(4,1fr)}
+#game.cam #deck{display:none}
+@media (orientation:landscape) and (max-height:540px){ #game.cam{grid-template-columns:minmax(0,1fr)} }
 
 /* camera check (Phase 0) */
 .actions.one{grid-template-columns:1fr}
@@ -182,6 +181,17 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       </div>
     </div>
     <div class="field">
+      <div class="lab">Camera play</div>
+      <div class="seg c2" id="segDevice">
+        <button data-v="tablet">Tablet<small>iPad</small></button>
+        <button data-v="phone">Phone<small>iPhone</small></button>
+      </div>
+      <div class="seg c2" id="segFacing">
+        <button data-v="front">Front camera<small>you see the screen</small></button>
+        <button data-v="back">Back camera<small>widest view, by sound</small></button>
+      </div>
+    </div>
+    <div class="field">
       <div class="lab">Preview</div>
       <div class="seg c2" id="segQuick">
         <button id="qOn" data-v="1">Quick look<small>30 s rounds, 8 s resets</small></button>
@@ -204,10 +214,11 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       <button class="primary" id="startBtn">Start session</button>
       <button class="secondary" id="autoBtn">Watch auto-play</button>
     </div>
-    <div class="actions"><button class="primary" id="camPlayBtn">Camera play</button><button class="secondary" id="labBtn">Camera check</button></div>
+    <div class="actions one"><button class="primary" id="camPlayBtn">Camera play</button><button class="secondary" id="labBtn" hidden>Camera check</button></div>
 
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
+      <div><b>Camera play:</b> prop the device sideways at hip height about 6 ft away (on an iPad, Center Stage off in Control Center). It calibrates you first: three holds, then shuffle side to side to the edges of the picture. With the back camera the screen faces away, so it all runs by sound.</div>
       <div><b>Block:</b> a down block, hands to his head and shoulders, hips back, feet planted. It stops a shot from range for little effort; a deep shot runs through it and needs the sprawl.</div>
       <div><b>Sprawl, shot, snap:</b> your big moves. Each round, the coach calls them and the drill partner shows the look.</div>
       <div><b>Live go reads:</b></div>
@@ -308,11 +319,24 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   RT.BAND = {lo:0.32, hi:0.58};   // the prototype's stance band, in level units (1 = standing tall)
   RT.STANCE_LEVEL = 0.45;         // where the calibrated square stance sits on the level scale
   RT.POSES = ['stand', 'square', 'stagger'];   // held poses; the floor comes from shuffling side to side (RT.floorFrom)
-  // The camera's vertical field of view for a 4:3 picture: the iPad front ultra-wide (122 degrees across the diagonal).
-  // Only the distance in feet uses it; sideways and forward-back meters come from the body itself.
-  RT.CAMERA = {vfovDeg:94};
-  // Focal length in picture heights for a frame of this aspect (a wider frame is the 4:3 picture cropped top and bottom).
-  RT.focal = aspect => 0.5/(Math.tan(RT.CAMERA.vfovDeg*Math.PI/360)*Math.min(1, (4/3)/aspect));
+  // Each camera's field of view across the short side of its 4:3 picture, from the lens's published angle across the
+  // diagonal (or its 35 mm equivalent). Only the distance in feet uses it; sideways and forward-back meters come
+  // from the body itself.
+  RT.LENSES = {
+    tablet_front: 94,        // iPad front ultra-wide, 122 degrees diagonal
+    tablet_back_ultra: 98,   // iPad Pro back ultra-wide, 125 degrees diagonal
+    tablet_back: 53,         // iPad back wide, about 26 mm equivalent
+    phone_front: 58,         // iPhone front, about 23 mm equivalent
+    phone_back_ultra: 90,    // iPhone back ultra-wide, 13 mm equivalent
+    phone_back: 53           // iPhone back wide, 26 mm equivalent
+  };
+  RT.CAMERA = {vfovDeg:RT.LENSES.tablet_front};  // the lens in use, set when the camera opens
+  // Focal length in picture heights for a frame of this aspect: landscape crops the 4:3 picture top and bottom for
+  // a wider frame; portrait has the long side up the screen.
+  RT.focal = aspect => {
+    const t = Math.tan(RT.CAMERA.vfovDeg*Math.PI/360);
+    return 0.5/(aspect >= 1 ? t*Math.min(1, (4/3)/aspect) : t*(4/3)*Math.min(1, (3/4)/aspect));
+  };
   const KEY = [0, 11, 12, 23, 24, 25, 26, 27, 28]; // nose, shoulders, hips, knees, ankles: must be in frame
 
   const P = p => Array.isArray(p) ? {x:p[0], y:p[1], z:p[2], v:p[3] == null ? 1 : p[3]} : {x:p.x, y:p.y, z:p.z, v:p.visibility == null ? 1 : p.visibility};
@@ -668,8 +692,10 @@ const fmtClock = s => { s = Math.max(0, Math.ceil(s)); return Math.floor(s/60) +
 const ms = s => Math.round(s*1000) + ' ms';
 
 /* ---------- settings ---------- */
-let settings = {len:15, pace:'match', quick:true};
+let settings = {len:15, pace:'match', quick:true, device:'tablet', facing:'front'};
 try { const s = JSON.parse(localStorage.getItem('roomtime.settings') || 'null'); if (s && LAYOUT[s.len] && PACE[s.pace]) settings = Object.assign(settings, s); } catch(e) {}
+if (!['tablet', 'phone'].includes(settings.device)) settings.device = 'tablet';
+if (!['front', 'back'].includes(settings.facing)) settings.facing = 'front';
 let muted = false;
 function saveSettings(){ try { localStorage.setItem('roomtime.settings', JSON.stringify(settings)); } catch(e) {} }
 
@@ -683,7 +709,7 @@ function buildPlan(len){
 }
 
 function renderMenu(){
-  [['segLen','len'],['segPace','pace'],['segQuick','quick']].forEach(([id,key]) => {
+  [['segLen','len'],['segPace','pace'],['segQuick','quick'],['segDevice','device'],['segFacing','facing']].forEach(([id,key]) => {
     $(id).querySelectorAll('button').forEach(b => {
       const v = key==='len' ? +b.dataset.v : key==='quick' ? b.dataset.v==='1' : b.dataset.v;
       b.setAttribute('aria-pressed', String(settings[key] === v));
@@ -701,6 +727,8 @@ function renderMenu(){
 $('segLen').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.len = +b.dataset.v; saveSettings(); renderMenu(); });
 $('segPace').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.pace = b.dataset.v; saveSettings(); renderMenu(); });
 $('segQuick').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.quick = b.dataset.v==='1'; saveSettings(); renderMenu(); });
+$('segDevice').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.device = b.dataset.v; saveSettings(); renderMenu(); });
+$('segFacing').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.facing = b.dataset.v; saveSettings(); renderMenu(); });
 renderMenu();
 
 /* ---------- audio ---------- */
@@ -1516,7 +1544,7 @@ function buildDebrief(){
 }
 
 // read-only view of the game for the 3D layer and camera play
-globalThis.RoomTimeGame = {get S(){ return S; }, cueGlow:() => S ? cueGlow() : null, BAND, ACT,
+globalThis.RoomTimeGame = {get S(){ return S; }, get settings(){ return settings; }, cueGlow:() => S ? cueGlow() : null, BAND, ACT,
   start:startSession, camMove:(type, pre) => act(type === 'down_block' ? 'block' : type, pre), onQuit:null,
   begin:() => { if (S && S.mode === 'calib') startRound(); }};
 
@@ -1583,27 +1611,31 @@ function unlockScreen(){ try { L.wake && L.wake.release(); } catch(e) {} L.wake 
 document.addEventListener('visibilitychange', () => { if (!document.hidden && L.src) lockScreen(); });
 
 /* ---------- camera ---------- */
-// The front camera's whole 4:3 picture (a 16:9 request crops the ultra-wide's top and bottom),
-// zoomed all the way out where the browser allows. A front camera listed as ultra wide is preferred.
-async function openCamera(deviceId){
-  const md = navigator.mediaDevices;
+// The chosen camera's whole 4:3 picture (a 16:9 request crops the top and bottom), zoomed all the way out where
+// the browser allows; a camera on that side listed as ultra wide is preferred. facing: 'front' or 'back'.
+// info.lens: 'front', 'back_ultra' (the ultra-wide lens, or the main lens zoomed below 1x) or 'back'.
+async function openCamera(deviceId, facing){
+  const md = navigator.mediaDevices, back = facing === 'back';
   const base = {width:{ideal:1920}, height:{ideal:1440}, aspectRatio:{ideal:4/3}, frameRate:{ideal:30}};
   const get = v => md.getUserMedia({audio:false, video:Object.assign({}, base, v)});
-  let st = await get(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:'user'});
+  let st = await get(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:back ? {ideal:'environment'} : 'user'});
   const cams = (await md.enumerateDevices()).filter(d => d.kind === 'videoinput');
   if (!deviceId) {
-    const uw = cams.find(d => /front/i.test(d.label) && /ultra ?wide/i.test(d.label));
+    const side = d => back ? !/front|facetime/i.test(d.label) : /front|facetime/i.test(d.label);
+    const uw = cams.find(d => side(d) && /ultra ?wide/i.test(d.label));
     if (uw && uw.label !== track(st).label) { try { const s2 = await get({deviceId:{exact:uw.deviceId}}); stopStream(st); st = s2; } catch(e) {} }
   }
   const tr = track(st);
-  let zoomMin = null;
+  let zoomMin = null, zoomedOut = false;
   try {
     const caps = tr.getCapabilities ? tr.getCapabilities() : {};
     const cur = tr.getSettings ? tr.getSettings().zoom : undefined;
-    if (caps.zoom) { zoomMin = caps.zoom.min; if (caps.zoom.min < (cur == null ? 1 : cur)) await tr.applyConstraints({advanced:[{zoom:caps.zoom.min}]}); }
+    if (caps.zoom) { zoomMin = caps.zoom.min; if (caps.zoom.min < (cur == null ? 1 : cur)) { await tr.applyConstraints({advanced:[{zoom:caps.zoom.min}]}); zoomedOut = caps.zoom.min < 1; } }
   } catch(e) {}
   const set = tr.getSettings ? tr.getSettings() : {};
-  return {stream:st, cams, info:{label:tr.label || '', deviceId:set.deviceId || deviceId || '', facing:set.facingMode || '', width:set.width || null, height:set.height || null, zoom:set.zoom == null ? null : set.zoom, zoomMin, fps:set.frameRate || null}};
+  const isBack = set.facingMode ? set.facingMode === 'environment' : back && !/front|facetime/i.test(tr.label || '');
+  const lens = !isBack ? 'front' : /ultra ?wide/i.test(tr.label || '') || zoomedOut ? 'back_ultra' : 'back';
+  return {stream:st, cams, info:{label:tr.label || '', deviceId:set.deviceId || deviceId || '', facing:isBack ? 'environment' : 'user', lens, width:set.width || null, height:set.height || null, zoom:set.zoom == null ? null : set.zoom, zoomMin, fps:set.frameRate || null}};
 }
 
 /* ---------- pose model ---------- */
@@ -1636,9 +1668,13 @@ async function startCamera(deviceId){
   try {
     if (!window.isSecureContext) throw new Error('The camera needs https.');
     status('Starting camera');
-    const c = await openCamera(deviceId);
+    const gs = (globalThis.RoomTimeGame && globalThis.RoomTimeGame.settings) || {};
+    const c = await openCamera(deviceId, gs.facing);
     L.stream = c.stream; L.cam = c.info; L.src = 'camera';
-    L.mirror = /front|facetime/i.test(c.info.label) || c.info.facing === 'user' || !c.info.facing;
+    // the lens in use sets the distance estimate's field of view
+    RT.CAMERA.vfovDeg = RT.LENSES[`${gs.device || 'tablet'}_${c.info.lens}`] || RT.LENSES.tablet_front;
+    L.cam.vfovDeg = RT.CAMERA.vfovDeg;
+    L.mirror = c.info.facing === 'user';   // a mirror for the front camera only
     video.srcObject = L.stream; video.muted = true; video.playsInline = true;
     await video.play();
     fillCams(c.cams, c.info.deviceId);
@@ -1789,6 +1825,8 @@ function closeLab(){
 }
 L.closers = [];
 $('labBtn').addEventListener('click', () => { unlockAudio(); openLab(); });
+// Camera check is for development only now (calibration covers it in play): #check in the URL shows its button
+$('labBtn').hidden = !/check/.test(location.hash);
 $('labBack').addEventListener('click', closeLab);
 $('labStart').addEventListener('click', () => { unlockAudio(); startCamera(); });
 $('labStop').addEventListener('click', () => { stopSource(); status('Camera off'); $('labEmpty').hidden = false; });

@@ -77,6 +77,15 @@ test('floor position runs -1 at the left edge to +1 at the right, from the shuff
   near(RT.readouts(M({ hip: 0.62, footW: 0.5, lean: 0.35 }), cal).floorX, 0, 0.03);
 });
 
+test('each lens sets the field of view the distance uses', () => {
+  const was = RT.CAMERA.vfovDeg;
+  RT.CAMERA.vfovDeg = RT.LENSES.phone_back;
+  const f = figure({ vfov: RT.LENSES.phone_back, dist: 3.0 }), m = RT.measure(f.lm, f.wl, f.aspect);
+  near(m.D, 3.0, 0.08, 'a phone back camera at 3 m');
+  RT.CAMERA.vfovDeg = was;
+  for (const k of ['tablet_front', 'tablet_back_ultra', 'tablet_back', 'phone_front', 'phone_back_ultra', 'phone_back']) assert.ok(RT.LENSES[k] > 40 && RT.LENSES[k] < 110, k);
+});
+
 test('your floor comes from shuffling side to side, in meters, robust to a stray frame', () => {
   const xs = Array.from({ length: 200 }, (_, i) => -1.4 + 2.8 * (i / 199));
   xs.push(-3, 3); // two stray frames
@@ -91,7 +100,8 @@ test('your floor comes from shuffling side to side, in meters, robust to a stray
   assert.equal(nar.floor().width, 4, 'and never narrows it');
 });
 
-const FR = { '4:3': { vfov: 94 }, '16:9': { aspect: 16 / 9, vfov: 2 * Math.atan(Math.tan(47 * Math.PI / 180) * 0.75) * 180 / Math.PI }, mirrored: { vfov: 94, mirror: true } };
+const LONG94 = 2 * Math.atan(Math.tan(47 * Math.PI / 180) * 4 / 3) * 180 / Math.PI; // a 3:4 portrait frame's vertical view
+const FR = { portrait: { aspect: 3 / 4, vfov: LONG94 }, '4:3': { vfov: 94 }, '16:9': { aspect: 16 / 9, vfov: 2 * Math.atan(Math.tan(47 * Math.PI / 180) * 0.75) * 180 / Math.PI }, mirrored: { vfov: 94, mirror: true } };
 for (const [name, fr] of Object.entries(FR)) {
   test(`meters: sideways, distance and eyes match the body (${name})`, () => {
     const cal = calFor(fr);
