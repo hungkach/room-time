@@ -12,7 +12,7 @@ export function figure(o = {}) {
     footW: 0.3,         // ankle to ankle
     elbowOut: 0.2,      // each elbow out from the midline (shoulder half width is 0.2)
     lean: 0.05,         // torso lean toward the camera, radians
-    stagger: 0,         // lead (left) foot this far nearer the camera
+    stagger: 0,         // lead foot this far nearer the camera: + left leads, - right leads
     dist: 1.8,          // camera to hips
     x: 0,               // sideways position
     camH: 0.95,         // camera height
@@ -35,7 +35,7 @@ export function figure(o = {}) {
   set(15, L * 0.12, wy, sz - 0.35); set(16, R * 0.12, wy, sz - 0.35);
   for (const [i, s] of [[17, L], [19, L], [21, L], [18, R], [20, R], [22, R]]) set(i, s * 0.12, wy - 0.02, sz - 0.38);
   set(23, L * 0.1, p.hip, Z); set(24, R * 0.1, p.hip, Z);
-  const zl = Z - p.stagger, zr = Z;
+  const zl = Z - Math.max(0, p.stagger), zr = Z - Math.max(0, -p.stagger); // + left foot leads, - right foot leads
   set(25, L * p.footW / 2, (p.hip + ank) / 2, zl - 0.12); set(26, R * p.footW / 2, (p.hip + ank) / 2, zr - 0.12);
   set(27, L * p.footW / 2, ank, zl); set(28, R * p.footW / 2, ank, zr);
   set(29, L * p.footW / 2, 0.04, zl + 0.05); set(30, R * p.footW / 2, 0.04, zr + 0.05);

@@ -44,6 +44,14 @@ for (const [name, fr] of Object.entries(FRAMINGS)) {
   });
 }
 
+for (const lead of [0.3, -0.3]) {
+  test(`either lead: shot and sprawl from a staggered stance (stagger ${lead})`, () => {
+    const st = { ...SQ, stagger: lead };
+    assert.equal(types(moves([{ ms: 0, ...st }, { ms: 1000, ...st }, { ms: 1300, hip: 0.42, footW: 0.55, lean: 0.6, dist: 1.5, stagger: lead }, { ms: 2500, hip: 0.42, footW: 0.55, lean: 0.6, dist: 1.5, stagger: lead }])), 'shot');
+    assert.equal(types(moves([{ ms: 0, ...st }, { ms: 1000, ...st }, { ms: 1300, hip: 0.32, footW: 0.6, lean: 0.9, dist: 2.3, handY: 0.4, stagger: lead }, { ms: 2500, hip: 0.32, footW: 0.6, lean: 0.9, dist: 2.3, handY: 0.4, stagger: lead }])), 'sprawl');
+  });
+}
+
 test('a sprawl right after a shot waits out the refractory time, then counts', () => {
   const low = { hip: 0.42, footW: 0.55, lean: 0.6, dist: 1.5 }, sp = { hip: 0.32, footW: 0.6, lean: 0.9, dist: 2.3, handY: 0.4 };
   const ev = moves([{ ms: 0, ...SQ }, { ms: 1000, ...SQ }, { ms: 1300, ...low }, { ms: 2000, ...low }, { ms: 2400, ...SQ }, { ms: 3200, ...SQ }, { ms: 3500, ...sp }, { ms: 4500, ...sp }]);
