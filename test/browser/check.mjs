@@ -45,6 +45,9 @@ try {
   await page.route('https://storage.googleapis.com/**', (rt) => rt.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: readFileSync(path.join(MP, rt.request().url().split('/').pop())) }));
   await page.route('https://fonts.googleapis.com/**', (rt) => rt.fulfill({ status: 200, body: '' }));
   await page.goto('http://localhost:8099/?fast');
+  check(await page.isHidden('#labBtn'), 'Camera check is not in the menu');
+  check(await page.isVisible('#segDevice') && await page.isVisible('#segFacing'), 'the menu offers tablet or phone, front or back camera');
+  await page.goto('http://localhost:8099/?fast#check'); await page.reload();
 
   // camera and real model
   await page.click('#labBtn');
@@ -130,6 +133,7 @@ try {
   await page.click('#camPlayBtn');
   await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
   check(await page.evaluate(() => RoomTimeGame.S.mode) === 'calib', 'camera play opens with the warm-up calibration');
+  check(await page.isHidden('#deck'), 'camera play hides the touch buttons');
   const holds = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
   check(await page.evaluate(() => RoomTimeGame.S.mode) === 'work' && holds.join() === 'Standing,Square stance,Staggered stance,Floor', 'then the warm-in starts: ' + holds.join(', '));
   // (this container renders camera play at about 2 fps, so the short ?fast shuffle catches only part of the floor)
