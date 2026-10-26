@@ -12,7 +12,7 @@ export function figure(o = {}) {
     footW: 0.3,         // ankle to ankle
     elbowOut: 0.2,      // each elbow out from the midline (shoulder half width is 0.2)
     lean: 0.05,         // torso lean toward the camera, radians
-    stagger: 0,         // lead (left) foot this far nearer the camera
+    stagger: 0,         // lead foot this far nearer the camera: + left leads, - right leads
     dist: 1.8,          // camera to hips
     x: 0,               // sideways position
     camH: 0.95,         // camera height
@@ -20,6 +20,7 @@ export function figure(o = {}) {
     aspect: 4 / 3,      // frame width / height
     mirror: false,      // a mirrored frame (x flipped)
     handY: null,        // wrist height above the floor (default: just below the shoulders, in front)
+    headDown: false,    // head dropped: face toward the floor instead of up and forward
     torso: 0.52, shoulderW: 0.4, vis: 0.95,
   }, o);
   const ank = 0.08, Z = p.dist;
@@ -27,15 +28,16 @@ export function figure(o = {}) {
   const R = -1, L = 1; // player's right at -X
   const P = new Array(33);
   const set = (i, X, Y, Zz) => { P[i] = [X + p.x, Y, Zz]; };
-  set(0, 0, sy + 0.22, sz - 0.08);
-  for (let i = 1; i <= 10; i++) set(i, (i <= 3 || i === 7 || i === 9 ? L : R) * 0.04, sy + 0.24, sz - 0.06);
+  const hy = p.headDown ? sy + 0.02 : sy + 0.22, hz = p.headDown ? sz - 0.2 : sz - 0.08;
+  set(0, 0, hy, hz);
+  for (let i = 1; i <= 10; i++) set(i, (i <= 3 || i === 7 || i === 9 ? L : R) * 0.04, hy + 0.02, hz + 0.02);
   set(11, L * p.shoulderW / 2, sy, sz); set(12, R * p.shoulderW / 2, sy, sz);
   set(13, L * p.elbowOut, sy - 0.26, sz - 0.12); set(14, R * p.elbowOut, sy - 0.26, sz - 0.12);
   const wy = p.handY == null ? sy - 0.2 : p.handY;
   set(15, L * 0.12, wy, sz - 0.35); set(16, R * 0.12, wy, sz - 0.35);
   for (const [i, s] of [[17, L], [19, L], [21, L], [18, R], [20, R], [22, R]]) set(i, s * 0.12, wy - 0.02, sz - 0.38);
   set(23, L * 0.1, p.hip, Z); set(24, R * 0.1, p.hip, Z);
-  const zl = Z - p.stagger, zr = Z;
+  const zl = Z - Math.max(0, p.stagger), zr = Z - Math.max(0, -p.stagger); // + left foot leads, - right foot leads
   set(25, L * p.footW / 2, (p.hip + ank) / 2, zl - 0.12); set(26, R * p.footW / 2, (p.hip + ank) / 2, zr - 0.12);
   set(27, L * p.footW / 2, ank, zl); set(28, R * p.footW / 2, ank, zr);
   set(29, L * p.footW / 2, 0.04, zl + 0.05); set(30, R * p.footW / 2, 0.04, zr + 0.05);

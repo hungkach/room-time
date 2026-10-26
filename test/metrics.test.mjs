@@ -106,6 +106,12 @@ for (const [name, fr] of Object.entries(FR)) {
     // turning the body doesn't change the meters: a staggered stance at the same spot
     const turned = RT.readouts(M({ ...fr, hip: 0.66, footW: 0.36, lean: 0.3, stagger: 0.35, x: 0.5, dist: 2.0 }), cal);
     near(turned.X, -0.5, 0.04, 'staggered');
+    // either lead reads the same: left foot forward or right foot forward
+    for (const stagger of [0.35, -0.35]) {
+      const q = RT.readouts(M({ ...fr, hip: 0.62, footW: 0.36, lean: 0.35, stagger, x: 0.4, dist: 2.0 }), cal);
+      near(q.level, RT.STANCE_LEVEL, 0.05, `level with stagger ${stagger}`);
+      near(q.X, -0.4, 0.04, `sideways with stagger ${stagger}`);
+    }
   });
 }
 

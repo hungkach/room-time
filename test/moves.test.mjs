@@ -36,11 +36,27 @@ for (const [name, fr] of Object.entries(FRAMINGS)) {
     const ev = moves([{ ms: 0, ...SQ, handY: 1.15 }, { ms: 1000, ...SQ, handY: 1.15 }, { ms: 1250, ...SQ, handY: 0.66 }, { ms: 2200, ...SQ, handY: 0.66 }], fr);
     assert.equal(types(ev), 'snap');
   });
+  test(`down block: hands to the knees, a small drop, hips back (${name})`, () => {
+    const blk = { ...SQ, hip: 0.58, lean: 0.5, dist: 2.1, handY: 0.33 };
+    assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 1000, ...SQ }, { ms: 1250, ...blk }, { ms: 2200, ...blk }], fr)), 'down_block');
+  });
+  test(`a sprawl with the hands down is still a sprawl, not a down block (${name})`, () => {
+    const sp = { hip: 0.32, footW: 0.6, lean: 0.9, dist: 2.3, handY: 0.25 };
+    assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 1000, ...SQ }, { ms: 1300, ...sp }, { ms: 2500, ...sp }], fr)), 'sprawl');
+  });
   test(`nothing: a plain level change, a slow sink, circling, standing up (${name})`, () => {
     assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 1000, ...SQ }, { ms: 1250, ...SQ, hip: 0.54 }, { ms: 2500, ...SQ, hip: 0.54 }], fr)), '', 'level change');
     assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 3000, ...SQ, hip: 0.4, ramp: 2500 }, { ms: 4000, ...SQ, hip: 0.4 }], fr)), '', 'slow sink');
     assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 800, ...SQ, x: 0.5 }, { ms: 1600, ...SQ, x: -0.5 }, { ms: 2400, ...SQ, x: 0 }], fr)), '', 'circling');
     assert.equal(types(moves([{ ms: 0, ...SQ }, { ms: 800, hip: 0.95, footW: 0.3, lean: 0.05, dist: 2.0 }, { ms: 1800, hip: 0.95, footW: 0.3, lean: 0.05, dist: 2.0 }], fr)), '', 'standing up');
+  });
+}
+
+for (const lead of [0.3, -0.3]) {
+  test(`either lead: shot and sprawl from a staggered stance (stagger ${lead})`, () => {
+    const st = { ...SQ, stagger: lead };
+    assert.equal(types(moves([{ ms: 0, ...st }, { ms: 1000, ...st }, { ms: 1300, hip: 0.42, footW: 0.55, lean: 0.6, dist: 1.5, stagger: lead }, { ms: 2500, hip: 0.42, footW: 0.55, lean: 0.6, dist: 1.5, stagger: lead }])), 'shot');
+    assert.equal(types(moves([{ ms: 0, ...st }, { ms: 1000, ...st }, { ms: 1300, hip: 0.32, footW: 0.6, lean: 0.9, dist: 2.3, handY: 0.4, stagger: lead }, { ms: 2500, hip: 0.32, footW: 0.6, lean: 0.9, dist: 2.3, handY: 0.4, stagger: lead }])), 'sprawl');
   });
 }
 
