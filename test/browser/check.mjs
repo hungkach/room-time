@@ -28,8 +28,6 @@ const POSE = {
   Standing: { hip: 0.95, footW: 0.3, lean: 0.05 },
   'Square stance': { hip: 0.62, footW: 0.5, lean: 0.35 },
   'Staggered stance': { hip: 0.66, footW: 0.36, lean: 0.3, stagger: 0.35 },
-  'Left wall': { hip: 0.62, footW: 0.5, lean: 0.35, x: 1.0 },
-  'Right wall': { hip: 0.62, footW: 0.5, lean: 0.35, x: -1.0 },
 };
 
 const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
@@ -39,6 +37,10 @@ try {
   await page.route('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1/**', (rt) => {
     const rel = rt.request().url().split('@1.1.1/')[1];
     rt.fulfill({ status: 200, headers: { 'content-type': rel.endsWith('.wasm') ? 'application/wasm' : 'text/javascript', 'access-control-allow-origin': '*' }, body: readFileSync(path.join(MP, 'package', rel)) });
+  });
+  await page.route('https://cdn.jsdelivr.net/npm/three@0.186.1/**', (rt) => {
+    const rel = rt.request().url().split('@0.186.1/')[1];
+    rt.fulfill({ status: 200, headers: { 'content-type': 'text/javascript', 'access-control-allow-origin': '*' }, body: readFileSync(path.join(MP, 'three/package', rel)) });
   });
   await page.route('https://storage.googleapis.com/**', (rt) => rt.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: readFileSync(path.join(MP, rt.request().url().split('/').pop())) }));
   await page.route('https://fonts.googleapis.com/**', (rt) => rt.fulfill({ status: 200, body: '' }));
@@ -62,16 +64,33 @@ try {
   });
   const pose = (p) => page.evaluate((p) => Object.assign(window.__pose, { stagger: 0, x: 0, elbowOut: 0.2 }, p), p);
 
+  // shuffling side to side in stance, the player's left wall at +X 1.0 and right at -1.0
+  const sweep = (on) => page.evaluate((on) => {
+    clearInterval(window.__sweep);
+    if (on) window.__sweep = setInterval(() => { window.__pose.x = Math.sin(performance.now() / 600) * 1.05; }, 50);
+    else window.__pose.x = 0;
+  }, on);
+  // follows the spoken cues on the status line until done() is true
+  const followCues = async (done, ms = 120000) => {
+    const seen = new Set(), t0 = Date.now();
+    while (Date.now() - t0 < ms && !(await done())) {
+      const m = (await page.textContent('#labStatus')).match(/Calibrate: (.*)/);
+      if (m && !seen.has(m[1])) {
+        seen.add(m[1]);
+        if (m[1] === 'Walls') { await pose(POSE['Square stance']); await sweep(true); }
+        else if (POSE[m[1]]) { await sweep(false); await pose(POSE[m[1]]); }
+      }
+      await page.waitForTimeout(150);
+    }
+    await sweep(false);
+    return [...seen];
+  };
+
   // calibration, posed per cue
   await page.click('#calBtn');
-  const seen = new Set(), t0 = Date.now();
-  while (Date.now() - t0 < 120000 && await page.textContent('#calBtn') !== 'Calibrate') {
-    const m = (await page.textContent('#labStatus')).match(/Calibrate: (.*)/);
-    if (m && POSE[m[1]] && !seen.has(m[1])) { seen.add(m[1]); await pose(POSE[m[1]]); }
-    await page.waitForTimeout(150);
-  }
+  const cues = await followCues(async () => await page.textContent('#calBtn') === 'Calibrate');
   const cal = await page.evaluate(() => RoomTimeLab.L.cal);
-  check(cal && ['stand', 'square', 'stagger', 'wallL', 'wallR'].every((k) => cal[k]), 'all five poses calibrated');
+  check(cal && ['stand', 'square', 'stagger', 'wallL', 'wallR'].every((k) => cal[k]), 'calibrated: three holds and the walls from the sweep (' + cues.join(', ') + ')');
 
   // live readouts
   const live = async (p) => { await pose(p); await page.waitForTimeout(800); return page.evaluate(() => RoomTimeLab.L.cur.r); };
@@ -85,10 +104,39 @@ try {
   await page.waitForSelector('#recTrace:not([hidden])', { timeout: 15000 });
   check(/frames/.test(await page.textContent('#recOut')), 'recording made a trace: ' + await page.textContent('#recOut'));
 
-  // the touch game still works
+  // the touch game still works, now in 3D
   await page.click('#labBack');
   await page.click('#autoBtn'); await page.waitForTimeout(1500);
   check(await page.textContent('#phaseName') === 'Warm-in', 'touch auto-play still starts');
+  await page.waitForFunction(() => globalThis.RoomTime3D && RoomTime3D.ok, null, { timeout: 30000 }).catch(() => {});
+  const r3 = await page.evaluate(() => ({ ok: RoomTime3D.ok, ms: RoomTime3D.buildMs }));
+  check(r3.ok, `3D view renders (body built in ${r3.ms} ms)`);
+
+  // camera play with the synthetic figure: the warm-up calibration, walls from the warm-in's circling,
+  // then the tracker drives level, floor and eye height, and a shot comes in as a move
+  await page.click('#endBtn');
+  await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('roomtime.cal')); delete c.wallL; delete c.wallR; localStorage.setItem('roomtime.cal', JSON.stringify(c)); });
+  await page.click('#camPlayBtn');
+  await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
+  check(await page.evaluate(() => RoomTimeGame.S.mode) === 'calib', 'camera play opens with the warm-up calibration');
+  const holds = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
+  check(await page.evaluate(() => RoomTimeGame.S.mode) === 'work' && holds.join() === 'Standing,Square stance,Staggered stance', 'then the warm-in starts: ' + holds.join(', '));
+  await sweep(true); await page.waitForTimeout(6000); await sweep(false);
+  const walls = await page.evaluate(() => RoomTimeLab.L.cal.wallL && [RoomTimeLab.L.cal.wallL.hipX, RoomTimeLab.L.cal.wallR.hipX]);
+  check(!!walls, 'the warm-in circling set the walls: ' + JSON.stringify(walls));
+  await page.evaluate(() => { window.__moves = []; const orig = RoomTimeGame.camMove; RoomTimeGame.camMove = (t, p) => { window.__moves.push(t); orig(t, p); }; });
+  const camState = async (p, ms = 1500) => { await pose(p); await page.waitForTimeout(ms); return page.evaluate(() => { const S = RoomTimeGame.S; return { level: S.level, x: S.youX, eye: S.cam.head && S.cam.head.eye, moves: window.__moves.join(',') }; }); };
+  let c = await camState({ ...POSE['Square stance'], dist: 2.0 });
+  check(Math.abs(c.level - 0.45) < 0.05, 'camera play: stance drives the level: ' + c.level.toFixed(2));
+  c = await camState({ ...POSE.Standing, dist: 2.0 });
+  check(c.level > 0.9 && c.eye > 1.55, `camera play: standing raises level and eyes (${c.level.toFixed(2)}, ${c.eye.toFixed(2)} m)`);
+  c = await camState({ ...POSE['Square stance'], x: -0.7, dist: 2.0 });
+  check(c.x > 0.5, 'camera play: moving toward the right wall moves you on the floor: ' + c.x.toFixed(2));
+  await camState({ ...POSE['Square stance'], dist: 2.0 });
+  c = await camState({ hip: 0.42, footW: 0.55, lean: 0.6, dist: 1.5 }, 1200);
+  check(c.moves === 'shot', 'camera play: a drop stepping in is a shot: ' + c.moves);
+  await page.click('#endBtn'); await page.waitForTimeout(300);
+  check(await page.evaluate(() => RoomTimeLab.L.src) === null, 'leaving camera play stops the camera');
 } finally {
   await browser.close(); server.close();
 }

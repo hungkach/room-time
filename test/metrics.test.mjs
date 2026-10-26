@@ -76,6 +76,21 @@ test('floor position runs -1 at the left wall to +1 at the right', () => {
   near(RT.readouts(M({ hip: 0.62, footW: 0.5, lean: 0.35 }), cal).floorX, 0, 0.01);
 });
 
+test('walls come from moving side to side, robust to a stray frame, either mirroring', () => {
+  const xs = Array.from({ length: 200 }, (_, i) => 0.3 + 0.4 * (i / 199));
+  xs.push(0.02, 0.99); // two stray frames
+  const w = RT.wallsFrom(xs, -1); // raw front camera: the player's left shows at larger x
+  assert.ok(Math.abs(w.wallL.hipX - 0.7) < 0.01 && Math.abs(w.wallR.hipX - 0.3) < 0.01, JSON.stringify(w));
+  const m = RT.wallsFrom(xs, 1);
+  assert.ok(m.wallL.hipX < m.wallR.hipX, 'mirrored: left at smaller x');
+  assert.equal(RT.wallsFrom([0.5, 0.52, 0.51], -1), null, 'too little movement sets no walls');
+  const tr = new RT.WallTracker(-1);
+  for (const x of xs.slice(0, 100)) tr.push(x);
+  const a = tr.walls(); for (const x of xs.slice(100)) tr.push(x);
+  const b = tr.walls();
+  assert.ok(b.wallL.hipX > a.wallL.hipX, 'the range widens as the player goes further');
+});
+
 test('calibration keeps medians and per-stance ratios', () => {
   const cal = calFor();
   near(cal.stand.world.hipH, 0.87, 0.001);

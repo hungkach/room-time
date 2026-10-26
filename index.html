@@ -6,6 +6,7 @@
 <style>*,*::before,*::after{box-sizing:border-box}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);height:100%}body{margin:0}[hidden]{display:none!important}</style>
 <title>Room Time</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"}}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
@@ -69,7 +70,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 .ibtn{width:36px;height:36px;border-radius:10px;background:var(--panel);border:1px solid var(--edge);display:grid;place-items:center;flex:none}
 .ibtn svg{width:18px;height:18px;stroke:var(--ink);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #stage{flex:1;min-height:0;position:relative;border-radius:14px;overflow:hidden;background:var(--wall)}
-#cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#cv,#cv3d{position:absolute;inset:0;width:100%;height:100%;display:block}
 #deck{height:clamp(170px,31vh,270px);display:grid;grid-template-columns:1.3fr 1fr;gap:10px;flex:none}
 #pad{position:relative;border-radius:14px;background:var(--panel);border:1px solid var(--edge);touch-action:none;overflow:hidden}
 #padBand{position:absolute;left:0;right:0;background:var(--green-soft);border-top:1px dashed var(--green);border-bottom:1px dashed var(--green)}
@@ -109,6 +110,13 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   #deck{height:auto}
 }
 @media (prefers-reduced-motion:reduce){.move{transition:none}}
+
+/* camera play: the tracker drives the game; a small preview of the camera, the move buttons as a backup */
+#pip{position:absolute;right:10px;bottom:10px;width:min(26%,200px);aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:#000;display:none;pointer-events:none;opacity:.85}
+#game.cam #pip{display:block}
+#game.cam #pad{display:none}
+#game.cam #deck{height:64px;grid-template-columns:1fr}
+#game.cam #btns{grid-template-rows:none;grid-template-columns:repeat(3,1fr)}
 
 /* camera check (Phase 0) */
 .actions.one{grid-template-columns:1fr}
@@ -196,7 +204,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       <button class="primary" id="startBtn">Start session</button>
       <button class="secondary" id="autoBtn">Watch auto-play</button>
     </div>
-    <div class="actions one"><button class="secondary" id="labBtn">Camera check</button></div>
+    <div class="actions"><button class="primary" id="camPlayBtn">Camera play</button><button class="secondary" id="labBtn">Camera check</button></div>
 
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
@@ -223,7 +231,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       <button class="ibtn" id="muteBtn" aria-label="Mute"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path id="muteWave" d="M16.5 8.5a5 5 0 0 1 0 7"/></svg></button>
       <button class="ibtn" id="endBtn" aria-label="End session"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
-    <div id="stage"><canvas id="cv"></canvas></div>
+    <div id="stage"><canvas id="cv3d"></canvas><canvas id="cv"></canvas><div id="pip"></div></div>
     <div id="deck">
       <div id="pad">
         <div id="padBand"><em>stance</em></div>
@@ -267,6 +275,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         </div>
         <select class="lsel" id="labCam" hidden aria-label="Camera"></select>
         <div class="lcard"><h3>Live</h3>
+          <div id="liveMove" class="verdict">Moves: shoot, sprawl or snap to test them.</div>
           <div class="seg c3" id="liveSrc"><button data-v="world">World<small>hip height</small></button><button data-v="imgS">Image ÷ S<small>hip height</small></button><button data-v="img">Image<small>hip height</small></button></div>
           <div id="liveOut">Start the camera.</div></div>
         <div class="lcard"><h3>Calibration</h3><div id="calOut"></div>
@@ -296,7 +305,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 
   RT.BAND = {lo:0.32, hi:0.58};   // the prototype's stance band, in level units (1 = standing tall)
   RT.STANCE_LEVEL = 0.45;         // where the calibrated square stance sits on the level scale
-  RT.POSES = ['stand', 'square', 'stagger', 'wallL', 'wallR'];
+  RT.POSES = ['stand', 'square', 'stagger'];   // held poses; the walls come from moving side to side (RT.wallsFrom)
   const KEY = [0, 11, 12, 23, 24, 25, 26, 27, 28]; // nose, shoulders, hips, knees, ankles: must be in frame
 
   const P = p => Array.isArray(p) ? {x:p[0], y:p[1], z:p[2], v:p[3] == null ? 1 : p[3]} : {x:p.x, y:p.y, z:p.z, v:p.visibility == null ? 1 : p.visibility};
@@ -312,11 +321,16 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   function space(list, sx){
     const q = i => { const p = P(list[i]); return {x:p.x*sx, y:p.y}; };
     const lS = q(11), rS = q(12), lE = q(13), rE = q(14), lH = q(23), rH = q(24), lA = q(27), rA = q(28);
+    const nose = q(0), wM = mid(q(15), q(16));
     const sM = mid(lS, rS), hM = mid(lH, rH), aM = mid(lA, rA);
-    const dir = Math.sign(rS.x - lS.x) || 1;
+    const dir = Math.sign(rS.x - lS.x) || 1, T = dist(sM, hM);
     return {
       S: dist(lS, rS),                 // shoulder width
-      T: dist(sM, hM),                 // torso length
+      T,                               // torso length
+      hipW: dist(lH, rH),              // hip width: grows when you step in, shrinks when the hips go back
+      noseH: aM.y - nose.y,            // head height above the ankles
+      headX: (nose.x - hM.x)*dir,      // head out over the hips, toward the player's right
+      wristH: (hM.y - wM.y)/T,         // hands above the hips in torso lengths (shoulders about 1)
       hipH: aM.y - hM.y,               // hip midpoint above the ankle midpoint
       footW: Math.abs(rA.x - lA.x),    // ankle to ankle, across
       elbowL: (sM.x - lE.x)*dir,       // each elbow out from the shoulder midpoint
@@ -383,6 +397,12 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     if (cal.square) out.level = RT.levelFromRatio(out.ratios[src], cal.square.ratios[src]);
     out.zone = RT.stanceZone(out.level);
     out.floorX = RT.floorX(m.hipX, cal);
+    // head height against standing (your eyes in the 3D view), from the same source as the hips
+    const st = cal.stand;
+    const head = {img: m.img.noseH/st.img.noseH, imgS: (m.img.noseH/m.img.S)/(st.img.noseH/st.img.S),
+      world: m.world && st.world ? m.world.noseH/st.world.noseH : null}[src];
+    out.headRatio = num(head) && head > 0 ? head : null;
+    out.headX = m.world ? m.world.headX : m.img.headX/m.img.S*0.4;  // meters
     return out;
   };
 
@@ -406,11 +426,26 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     return out;
   };
 
-  // Calibration from the captured measures of each pose: {stand: [m...], square: [...], ...}.
+  // Walls from the hips' image x while the player moves side to side (the warm-up): the 2nd and 98th
+  // percentiles, so a stray frame can't set a wall. dir (from the standing capture) says which side is their left.
+  RT.wallsFrom = function(xs, dir, minRange){
+    const lo = RT.percentile(xs, 0.02), hi = RT.percentile(xs, 0.98);
+    if (lo == null || hi - lo < (minRange == null ? 0.1 : minRange)) return null;
+    return dir > 0 ? {wallL:{hipX:lo}, wallR:{hipX:hi}} : {wallL:{hipX:hi}, wallR:{hipX:lo}};
+  };
+  // Learns the walls from every hip position it is given; the range only ever widens.
+  RT.WallTracker = class {
+    constructor(dir){ this.dir = dir; this.xs = []; }
+    push(x){ if (num(x)) { this.xs.push(x); if (this.xs.length > 6000) this.xs.splice(0, 1000); } }
+    walls(){ return RT.wallsFrom(this.xs, this.dir); }
+  };
+
+  // Calibration from the captured measures of each pose: {stand: [m...], square: [...], stagger: [...], sweep: [m...]}.
   RT.buildCal = function(caps, meta){
     const cal = Object.assign({v:1, at:null}, meta || {});
     for (const pose of RT.POSES) if (caps[pose] && caps[pose].length) cal[pose] = RT.medianTree(caps[pose]);
     if (!cal.stand) return cal;
+    if (caps.sweep && caps.sweep.length) Object.assign(cal, RT.wallsFrom(caps.sweep.map(m => m.hipX), cal.stand.img.dir) || {});
     for (const pose of ['square', 'stagger']) {
       const c = cal[pose]; if (!c) continue;
       c.ratios = RT.hipRatios(c, cal.stand);
@@ -434,6 +469,57 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     if (bot - top < 0.15) return {ok:false, hint:'Step closer'}; // a deep stance at 8 ft fills only about 0.23
     return {ok:true, hint:''};
   };
+
+  // One Euro filter (Casiez et al. 2012), from body-arcade engine/one-euro.js at 12ef6b8.
+  RT.OneEuro = class {
+    constructor(minCutoff = 1.5, beta = 0.5, dCutoff = 1.0){ this.minCutoff = minCutoff; this.beta = beta; this.dCutoff = dCutoff; this.x = null; this.dx = 0; this.t = null; }
+    filter(v, tSec){
+      if (!num(v)) return this.x;
+      if (this.x === null) { this.x = v; this.t = tSec; return v; }
+      const a = (c, dt) => 1/(1 + 1/(2*Math.PI*c*dt)), dt = Math.max(tSec - this.t, 1e-3);
+      this.t = tSec;
+      this.dx += a(this.dCutoff, dt)*((v - this.x)/dt - this.dx);
+      this.x += a(this.minCutoff + this.beta*Math.abs(this.dx), dt)*(v - this.x);
+      return this.x;
+    }
+  };
+
+  // Shot, sprawl and snap from the camera, in the player's own level units.
+  //   shot:   a fast level drop while closing in (hip width grows on screen as you step in)
+  //   sprawl: a bigger, deeper drop with the hips going back (hip width holds or shrinks)
+  //   snap:   hands come down fast from tie height to the belt while the level holds
+  // A drop is judged once the level has stopped falling for settleMs. Pure: feed it frames, it returns moves.
+  RT.MOVES = {windowMs:1200, maxDropMs:650, settleMs:90, minDrop:0.2, shotGrow:0.07, sprawlLevel:0.24, sprawlDrop:0.26,
+    snapFrom:0.6, snapTo:0.25, snapMs:500, snapHold:0.15, refractoryMs:900};
+  RT.MoveDetector = class {
+    constructor(opts){ this.o = Object.assign({}, RT.MOVES, opts || {}); this.h = []; this.last = -1e9; }
+    // s: {t: ms, level, hipW, wristH}; returns {type, from, to, ms, grow} or null
+    push(s){
+      const o = this.o, h = this.h;
+      if (!s || !num(s.level)) return null;
+      h.push(s); while (h.length && s.t - h[0].t > o.windowMs) h.shift();
+      if (s.t - this.last < o.refractoryMs) return null;
+      // the lowest point so far, and the highest point before it
+      let lo = h[0]; for (const x of h) if (x.level < lo.level - 0.005) lo = x;   // the first time it got this low
+      let top = lo; for (const x of h) { if (x.t >= lo.t) break; if (x.level > top.level) top = x; }
+      const drop = top.level - lo.level, ms = lo.t - top.t;
+      if (drop >= o.minDrop && ms <= o.maxDropMs && s.t - lo.t >= o.settleMs) {
+        const grow = num(lo.hipW) && num(top.hipW) && top.hipW > 0 ? lo.hipW/top.hipW - 1 : 0;
+        let type = null;
+        if (grow >= o.shotGrow) type = 'shot';
+        else if (lo.level <= o.sprawlLevel && drop >= o.sprawlDrop && grow <= 0.02) type = 'sprawl';
+        if (type) return this.fire(s, {type, from:top.level, to:lo.level, ms, grow});
+      }
+      // snap: hands from tie height to the belt, fast, level held
+      let hi = null; for (const x of h) if (num(x.wristH) && (!hi || x.wristH >= hi.wristH - 0.02)) hi = x;   // the latest high point
+      if (hi && num(s.wristH) && hi.wristH >= o.snapFrom && s.wristH <= o.snapTo && s.t - hi.t <= o.snapMs && Math.abs(s.level - hi.level) <= o.snapHold)
+        return this.fire(s, {type:'snap', from:hi.wristH, to:s.wristH, ms:s.t - hi.t, grow:0});
+      return null;
+    }
+    fire(s, ev){ this.last = s.t; this.h = [s]; return ev; }
+  };
+  // The detector's inputs from one frame's measures and readouts.
+  RT.moveInput = (t, m, r) => m && r && num(r.level) ? {t, level:r.level, hipW:m.img.hipW, wristH:m.img.wristH} : null;
 
   // Timestamps for detectForVideo must strictly increase.
   RT.nextTs = (last, now) => now > last ? now : last + 1;
@@ -580,7 +666,8 @@ function resize(){
 }
 window.addEventListener('resize', resize);
 
-function startSession(auto){
+// cam: camera play, where the tracker (rt-lab-tools) writes S.cam {level, floorX, head, seen} every frame
+function startSession(auto, cam){
   ensureAudio();
   const P = PACE[settings.pace];
   S = {
@@ -594,9 +681,13 @@ function startSession(auto){
     rounds:[], goes:[], score:{you:0, opp:0},
     callout:null, coachLine:null, lastCorrection:-99, hiT:0, loT:0, lastMoveT:0,
     bot:{q:[], drift:0, lapseUntil:0, dipUntil:0, vxUntil:0, vxDir:0}, R:null, restNote:'',
-    skipRest:false, lastCutT:-9, pressOff:0, pressDir:1
+    skipRest:false, lastCutT:-9, pressOff:0, pressDir:1,
+    cam:cam && !auto ? {level:null, floorX:null, head:null, seen:false} : null, camOff:0
   };
   $('menu').hidden = true; $('debrief').hidden = true; $('game').hidden = false;
+  $('game').classList.toggle('cam', !!S.cam);
+  // camera play waits in 'calib' for the warm-up calibration, then RoomTimeGame.begin() starts round one
+  if (S.cam) { S.mode = 'calib'; S.calibNote = ''; requestAnimationFrame(() => { resize(); }); return; }
   $('padHint').hidden = auto; $('padDot').hidden = true;
   requestAnimationFrame(() => { resize(); });
   say('Room time.', true);
@@ -606,7 +697,9 @@ function startSession(auto){
 function quit(){
   try { speechSynthesis.cancel(); } catch(e) {}
   try { wakeLock && wakeLock.release(); } catch(e) {}
+  const wasCam = S && S.cam;
   S = null; $('game').hidden = true; $('debrief').hidden = true; $('menu').hidden = false; renderMenu();
+  if (wasCam && globalThis.RoomTimeGame.onQuit) globalThis.RoomTimeGame.onQuit();
 }
 
 function roundTitle(rd){
@@ -720,7 +813,7 @@ function liveUpdate(dt){
     }
     case 'press':
       // he drives you toward the nearer wall; hold a move back toward center to circle off
-      S.youX = clamp(S.youX + S.pressDir*0.38*dt, -1, 1);
+      if (S.cam) S.camOff += S.pressDir*0.38*dt; else S.youX = clamp(S.youX + S.pressDir*0.38*dt, -1, 1);
       o.x = lerp(o.x, S.youX + S.pressDir*0.1, Math.min(1, dt*3));
       if (S.vx*S.pressDir < -0.35) S.pressOff += dt; else S.pressOff = Math.max(0, S.pressOff - dt);
       if (S.pressOff > 0.5) { callout('Circled off', 'back to center', 'good'); sfx.blip(); setOpp('circle', rand(...S.P.decide)); }
@@ -734,8 +827,12 @@ function liveUpdate(dt){
     case 'stuffed': case 'snapped': if (o.t > o.dur) { callout('Reset', 'no go-behind', 'info'); setOpp('reset', 1.2); } break;
     case 'reset':
       // whistle reset: both wrestlers walk back to center, like a real restart
-      o.x = lerp(o.x, 0, Math.min(1, dt*3)); S.youX = lerp(S.youX, 0, Math.min(1, dt*2.5));
-      if (o.t > o.dur) setOpp('circle', rand(...S.P.decide));
+      o.x = lerp(o.x, 0, Math.min(1, dt*3));
+      if (!S.cam) S.youX = lerp(S.youX, 0, Math.min(1, dt*2.5));
+      else S.camOff = lerp(S.camOff, 0, Math.min(1, dt*2));
+      // with a camera you walk back to the middle yourself before the restart
+      if (o.t > o.dur && (!S.cam || Math.abs(S.youX) < 0.35)) setOpp('circle', rand(...S.P.decide));
+      else if (S.cam && o.t > o.dur && o.t - o.dur < 0.05) callout('Back to center', '', 'info');
       break;
   }
   if (o.state !== 'reset' && Math.abs(S.youX) >= 0.97) {
@@ -854,10 +951,11 @@ function emit(type){
   if (S.plan[S.r].phase === 'live') liveInput(type); else drillInput(type);
 }
 const ACT = {sprawl:{dur:0.38}, shot:{dur:0.46}, snap:{dur:0.26}};
-function act(type){
+// pre: the level before the move (a camera move is read after the drop, so it brings its own)
+function act(type, pre){
   if (!S || S.mode !== 'work' || S.paused) return;
   if (S.action && S.time - S.action.t0 < S.action.dur) return;
-  S.preLevel = S.level;
+  S.preLevel = pre == null ? S.level : pre;
   S.action = {type, t0:S.time, dur:ACT[type].dur};
   if (type !== 'snap') S.explosive++;
   const btn = {sprawl:'bSprawl', shot:'bShot', snap:'bSnap'}[type];
@@ -910,6 +1008,8 @@ $('endBtn').addEventListener('click', quit);
 // testing: end this round now (its data is kept) and go straight to the next round with no reset
 $('skipBtn').addEventListener('click', () => {
   if (!S || S.mode === 'done') return;
+  // during the warm-up calibration, skip keeps the saved calibration and starts the warm-in
+  if (S.mode === 'calib') { if (globalThis.RoomTimeGame.skipCalib) globalThis.RoomTimeGame.skipCalib(); return; }
   S.paused = false;
   try { speechSynthesis.cancel(); } catch(e) {}
   if (S.mode === 'work') { S.skipRest = true; S.clock = 0; } else S.clock = 0;
@@ -970,12 +1070,28 @@ function updateBody(dt){
   }
   let target = S.padActive ? S.padTarget : 1.0;
   if (S.time < S.bot.dipUntil) target = Math.max(0.08, target - 0.24);
-  if (S.action) { if (S.action.type === 'sprawl') target = 0.1; else if (S.action.type === 'shot') target = 0.18; }
-  const rate = S.action ? 16 : (S.padActive ? 13 : 4);
+  if (S.action && !S.cam) { if (S.action.type === 'sprawl') target = 0.1; else if (S.action.type === 'shot') target = 0.18; }
+  let rate = S.action ? 16 : (S.padActive ? 13 : 4);
+  const C = S.cam;
+  if (C) {
+    // camera play: your own level and floor position, already smoothed by the tracker
+    if (C.level != null) { target = C.level; S.padActive = true; }
+    else target = S.level;
+    rate = 20;
+  }
   S.level += (target - S.level)*Math.min(1, dt*rate);
-  S.youX = clamp(S.youX + S.vx*dt*0.9, -1, 1);
-  if (S.vx > 0.45 && !S.latchR) { S.latchR = true; emit('right'); } else if (S.vx < 0.2) S.latchR = false;
-  if (S.vx < -0.45 && !S.latchL) { S.latchL = true; emit('left'); } else if (S.vx > -0.2) S.latchL = false;
+  let latch = 0.45, unlatch = 0.2;
+  if (C) {
+    if (C.floorX != null) {
+      const prev = C.lastFx == null ? C.floorX : C.lastFx; C.lastFx = C.floorX;
+      S.vx += (clamp((C.floorX - prev)/Math.max(dt, 1e-3)/0.9, -1.5, 1.5) - S.vx)*Math.min(1, dt*10);
+      S.youX = clamp(C.floorX + S.camOff, -1, 1);
+    }
+    S.camOff *= Math.exp(-dt*0.35);   // his drive fades once he stops pressing
+    latch = 0.3; unlatch = 0.12;        // a real shuffle step is slower than a thumb swipe
+  } else S.youX = clamp(S.youX + S.vx*dt*0.9, -1, 1);
+  if (S.vx > latch && !S.latchR) { S.latchR = true; emit('right'); } else if (S.vx < unlatch) S.latchR = false;
+  if (S.vx < -latch && !S.latchL) { S.latchL = true; emit('left'); } else if (S.vx > -unlatch) S.latchL = false;
   S.hist.push([S.time, S.level]); while (S.hist.length && S.time - S.hist[0][0] > 0.36) S.hist.shift();
   if (!S.action && S.time - S.lastLevelEvt > 0.7) {
     let mx = 0; for (const h of S.hist) mx = Math.max(mx, h[1]);
@@ -1010,6 +1126,7 @@ function update(dt){
       else if (rd.phase !== 'live' && Math.abs(S.youX) > 0.85) coach('Edge. Circle back in.');
       else if ((rd.phase === 'warm' || rd.phase === 'tech') && S.time - S.lastMoveT > 9) coach('Feet moving.');
     }
+    if (S.cam && S.cam.seenOnce && !S.cam.seen && S.time - S.lastCorrection > 4) coach('Step into view.');
     if (S.clock <= 0) endWork();
   } else if (S.mode === 'rest') {
     S.opp.t += dt; S.opp.x = lerp(S.opp.x, 0, Math.min(1, dt*2));
@@ -1033,6 +1150,17 @@ function poseTarget(o){
     case 'snapped': return {crouch:0.85, lean:1.05, arms:0.2, reach:0, head:1, scale:1.2, dy:0.12};
     default: return base;
   }
+}
+// the read the opponent (or the drill partner's cue) is showing: a color token name, or null
+function cueGlow(){
+  const o = S.opp, live = S.plan[S.r].phase === 'live';
+  if (live && S.mode === 'work') {
+    if (o.state === 'tell' || o.state === 'shoot') return 'red';
+    if (o.state === 'opening') return 'green';
+    if (o.state === 'hand') return 'amber';
+    if (o.state === 'press') return 'zone';
+  } else if (!live && S.cue) return {sprawl:'red', shot:'green', snap:'amber'}[S.cue.seq[S.cue.step]] || null;
+  return null;
 }
 function line(a, b, w, c){ ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); }
 function poly(pts, c){ ctx.fillStyle = c; ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); ctx.fill(); }
@@ -1098,44 +1226,42 @@ const FB = (wgt, px) => `${wgt} ${px}px "Barlow", system-ui, sans-serif`;
 function draw(){
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const rd = S.plan[S.r], live = rd.phase === 'live';
-  const shift = (S.level - 0.45)*H*0.10;
-  const hor = H*0.27;
-  ctx.fillStyle = COL.wall; ctx.fillRect(0, 0, W, hor + 2);
-  const pw = W/7, px0 = -((S.youX*W*0.12) % pw) - pw;
-  for (let i = 0; i < 10; i++) { if (i % 2) { ctx.fillStyle = COL['wall-pad']; ctx.fillRect(px0 + i*pw, hor*0.35, pw - 2, hor*0.65); } }
-  const g = ctx.createLinearGradient(0, hor, 0, H); g.addColorStop(0, COL['mat-deep']); g.addColorStop(1, COL.mat);
-  ctx.fillStyle = g; ctx.fillRect(0, hor, W, H - hor);
-  const cx = W/2 - S.youX*W*0.24, cy = hor + (H - hor)*0.5 + shift;
-  const rx = W*0.82, ry = (H - hor)*0.5;
-  ctx.fillStyle = COL.zone; ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = COL.mat; ctx.beginPath(); ctx.ellipse(cx, cy, rx*0.88, ry*0.88, 0, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = COL.line; ctx.globalAlpha = 0.75; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2); ctx.stroke();
-  ctx.beginPath(); ctx.ellipse(cx, cy, rx*0.12, ry*0.12, 0, 0, Math.PI*2); ctx.stroke();
-  ctx.globalAlpha = 1;
-  ctx.lineWidth = 4; ctx.lineCap = 'butt';
-  line([cx - rx*0.05, cy - ry*0.02], [cx - rx*0.05, cy + ry*0.02], 4, COL.red);
-  line([cx + rx*0.05, cy - ry*0.02], [cx + rx*0.05, cy + ry*0.02], 4, COL.blue);
+  // the 3D view (rt-3d) draws the room, the opponent and your arms when it loaded; this canvas then only overlays
+  const R3 = globalThis.RoomTime3D, use3d = !!(R3 && R3.ok);
+  if (use3d) ctx.clearRect(0, 0, W, H);
+  else {
+    const shift = (S.level - 0.45)*H*0.10;
+    const hor = H*0.27;
+    ctx.fillStyle = COL.wall; ctx.fillRect(0, 0, W, hor + 2);
+    const pw = W/7, px0 = -((S.youX*W*0.12) % pw) - pw;
+    for (let i = 0; i < 10; i++) { if (i % 2) { ctx.fillStyle = COL['wall-pad']; ctx.fillRect(px0 + i*pw, hor*0.35, pw - 2, hor*0.65); } }
+    const g = ctx.createLinearGradient(0, hor, 0, H); g.addColorStop(0, COL['mat-deep']); g.addColorStop(1, COL.mat);
+    ctx.fillStyle = g; ctx.fillRect(0, hor, W, H - hor);
+    const cx = W/2 - S.youX*W*0.24, cy = hor + (H - hor)*0.5 + shift;
+    const rx = W*0.82, ry = (H - hor)*0.5;
+    ctx.fillStyle = COL.zone; ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = COL.mat; ctx.beginPath(); ctx.ellipse(cx, cy, rx*0.88, ry*0.88, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = COL.line; ctx.globalAlpha = 0.75; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx*0.12, ry*0.12, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 4; ctx.lineCap = 'butt';
+    line([cx - rx*0.05, cy - ry*0.02], [cx - rx*0.05, cy + ry*0.02], 4, COL.red);
+    line([cx + rx*0.05, cy - ry*0.02], [cx + rx*0.05, cy + ry*0.02], 4, COL.blue);
 
-  const o = S.opp, tp = poseTarget(o), prate = (o.state === 'shoot' || o.state === 'stuffed') ? 18 : 9;
-  for (const k in S.pose) S.pose[k] += (tp[k] - S.pose[k])*Math.min(1, S._dt*prate);
-  const p = S.pose;
-  const u = Math.min(H*0.34, W*0.52)*p.scale;
-  const ox = W/2 + (o.x - S.youX)*W*0.38, fy = cy + (H - hor)*0.12 + p.dy*u*0.6;
-  let glow = null;
-  if (live && S.mode === 'work') {
-    if (o.state === 'tell' || o.state === 'shoot') {
+    const o = S.opp, tp = poseTarget(o), prate = (o.state === 'shoot' || o.state === 'stuffed') ? 18 : 9;
+    for (const k in S.pose) S.pose[k] += (tp[k] - S.pose[k])*Math.min(1, S._dt*prate);
+    const p = S.pose;
+    const u = Math.min(H*0.34, W*0.52)*p.scale;
+    const ox = W/2 + (o.x - S.youX)*W*0.38, fy = cy + (H - hor)*0.12 + p.dy*u*0.6;
+    const gk = cueGlow(), glow = gk ? COL[gk] : null;
+    if (gk === 'red' && live) {
       const pulse = 0.35 + 0.3*Math.sin(S.time*28);
       ctx.save(); ctx.globalAlpha = pulse; ctx.fillStyle = COL.red; ctx.beginPath(); ctx.ellipse(ox, fy, u*0.55, u*0.11, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
-      glow = COL.red;
-    } else if (o.state === 'opening') glow = COL.green;
-    else if (o.state === 'hand') glow = COL.amber;
-    else if (o.state === 'press') glow = COL.zone;
-  } else if (!live && S.cue) {
-    glow = {sprawl:COL.red, shot:COL.green, snap:COL.amber}[S.cue.seq[S.cue.step]] || null;
+    }
+    ctx.save(); ctx.globalAlpha = 0.35; ctx.fillStyle = COL.bg; ctx.beginPath(); ctx.ellipse(ox, fy + u*0.02, u*0.42, u*0.07, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    drawWrestler(ox, fy, u, p, glow, live ? 1 : 0.9);
   }
-  ctx.save(); ctx.globalAlpha = 0.35; ctx.fillStyle = COL.bg; ctx.beginPath(); ctx.ellipse(ox, fy + u*0.02, u*0.42, u*0.07, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
-  drawWrestler(ox, fy, u, p, glow, live ? 1 : 0.9);
 
   if (S.mode === 'work' && S.cue) {
     const need = S.cue.seq[S.cue.step];
@@ -1150,7 +1276,7 @@ function draw(){
       ctx.restore();
     }
   }
-  drawYou();
+  if (!use3d) drawYou();
 
   // edge glow on the side you're drifting toward
   const ax = Math.abs(S.youX);
@@ -1222,10 +1348,15 @@ function draw(){
     }
   }
 
-  if (S.mode === 'rest' || S.paused) {
+  if (S.mode === 'rest' || S.mode === 'calib' || S.paused) {
     ctx.fillStyle = COL.shade; ctx.fillRect(0, 0, W, H);
     ctx.textAlign = 'center'; ctx.fillStyle = COL.ink;
     if (S.paused) { ctx.font = FD(700, 44); ctx.fillText('Paused', W/2, H*0.45); }
+    else if (S.mode === 'calib') {
+      ctx.font = FD(700, 44); ctx.fillText('Warm-up calibration', W/2, H*0.36);
+      ctx.font = FB(500, 15); ctx.fillText(S.calibNote || '', W/2, H*0.36 + 30);
+      ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Then the warm-in: circle each way to your walls.', W/2, H*0.36 + 54);
+    }
     else {
       const next = S.plan[S.r + 1];
       ctx.font = FD(700, 44); ctx.fillText('Reset ' + fmtClock(S.clock), W/2, H*0.36);
@@ -1283,10 +1414,15 @@ function buildDebrief(){
     </div></div>
     <div class="actions"><button class="primary" id="againBtn">Run it again</button><button class="secondary" id="menuBtn">Change session</button></div>`;
   $('debrief').hidden = false; $('debrief').scrollTop = 0;
-  $('againBtn').onclick = () => startSession(S.auto);
+  $('againBtn').onclick = () => startSession(S.auto, !!S.cam);
   $('menuBtn').onclick = quit;
   say(`Session done. In stance ${pct} percent.${reac === null ? '' : ' Reaction ' + Math.round(reac*1000) + ' milliseconds.'}`, true);
 }
+
+// read-only view of the game for the 3D layer and camera play
+globalThis.RoomTimeGame = {get S(){ return S; }, cueGlow:() => S ? cueGlow() : null, BAND, ACT,
+  start:startSession, camMove:(type, pre) => act(type, pre), onQuit:null,
+  begin:() => { if (S && S.mode === 'calib') startRound(); }};
 
 /* ---------- loop ---------- */
 let lastTs = 0;
@@ -1494,7 +1630,7 @@ function onResult(res, inf, t){
 
 /* ---------- drawing ---------- */
 function fitView(){
-  const st = $('labStage').getBoundingClientRect(), v = $('labView');
+  const v = $('labView'), st = v.parentElement.getBoundingClientRect();
   const a = (video.videoWidth && video.videoHeight) ? video.videoWidth/video.videoHeight : 4/3;
   let w = st.width, h = w/a; if (h > st.height) { h = st.height; w = h*a; }
   v.style.width = w + 'px'; v.style.height = h + 'px';
@@ -1716,27 +1852,48 @@ $('benchSave').addEventListener('click', () => { const b = store.get('bench'); i
 L.closers.push(() => { cancelled.bench = cancelled.soak = true; });
 
 /* ---------- calibration ---------- */
-// Five held poses. Each: a spoken cue, time to get there, a framing check, then 3 s of frames whose medians are kept.
+// Three held poses (a spoken cue, time to get there, a framing check, then 3 s of frames whose medians are kept),
+// then the walls from shuffling side to side. In camera play the warm-in's circling sets the walls instead.
 const POSE_INFO = {
   stand:   {name:'Standing', say:'Stand tall, feet under your hips. Hold.'},
   square:  {name:'Square stance', say:'Square stance. Hold.'},
   stagger: {name:'Staggered stance', say:'Staggered stance, your normal lead. Hold.'},
-  wallL:   {name:'Left wall', say:'Shuffle to your left wall. Square stance. Hold.'},
-  wallR:   {name:'Right wall', say:'Now your right wall. Square stance. Hold.'}
+  sweep:   {name:'Walls', say:'Now shuffle side to side, wall to wall, in your stance.'}
 };
-const HOLD_MS = 3000, MIN_FRAMES = 5, FRAME_WAIT_MS = 20000;
+const HOLD_MS = 3000, MIN_FRAMES = 5, FRAME_WAIT_MS = 20000, SWEEP_MS = FAST ? 4000 : 12000;
+// the calibration's progress, on the Camera check status line and on the game screen in camera play
+function note(text){
+  status(text);
+  const S = globalThis.RoomTimeGame && globalThis.RoomTimeGame.S;
+  if (S && S.mode === 'calib') S.calibNote = text;
+}
 let cal = store.get('cal');
 L.cal = cal;
 
+// Side to side for SWEEP_MS: every hip position near the edges of the picture counts too.
+async function captureSweep(){
+  const info = POSE_INFO.sweep;
+  say(info.say); note('Calibrate: ' + info.name);
+  if (!await wait(1500, 'cal')) return null;
+  const got = [], fn = f => { if (f.lm && f.m && f.m.vis >= 0.5) got.push({hipX:f.m.hipX}); };
+  beep(660, 0.1); L.on.add(fn);
+  const ok = await wait(SWEEP_MS, 'cal');
+  L.on.delete(fn);
+  if (!ok) return null;
+  if (!cal || !cal.stand || !RT.wallsFrom(got.map(m => m.hipX), cal.stand.img.dir)) { say('Walls skipped, move further each way.'); note('Walls skipped: not enough side to side'); return null; }
+  beep(990, 0.12);
+  return got;
+}
+
 async function capturePose(pose){
-  const info = POSE_INFO[pose], wall = pose === 'wallL' || pose === 'wallR';
-  say(info.say); status('Calibrate: ' + info.name);
-  if (!await wait(wall ? 4000 : 2500, 'cal')) return null;
-  // at a wall the body may sit near the picture's edge; that is the point of the capture
-  const good = f => f && f.lm && f.m && f.m.vis >= 0.5 && (f.fc.ok || (wall && f.fc.hint === 'Move to the middle'));
+  if (pose === 'sweep') return captureSweep();
+  const info = POSE_INFO[pose];
+  say(info.say); note('Calibrate: ' + info.name);
+  if (!await wait(2500, 'cal')) return null;
+  const good = f => f && f.lm && f.m && f.m.vis >= 0.5 && f.fc.ok;
   const t0 = now(); let hintAt = now();
   while (!good(L.cur)) {
-    if (now() - t0 > FRAME_WAIT_MS) { say(info.name + ' skipped.'); status(`${info.name} skipped: ${L.cur && L.cur.lm ? L.cur.fc.hint || 'landmarks too faint' : 'no body seen'}`); await wait(1500, 'cal'); return null; }
+    if (now() - t0 > FRAME_WAIT_MS) { say(info.name + ' skipped.'); note(`${info.name} skipped: ${L.cur && L.cur.lm ? L.cur.fc.hint || 'landmarks too faint' : 'no body seen'}`); await wait(1500, 'cal'); return null; }
     if (now() - hintAt > 4000) { hintAt = now(); const h = !L.cur || !L.cur.lm ? 'Step into view' : L.cur.fc.hint; if (h) say(h); }
     if (!await wait(200, 'cal')) return null;
   }
@@ -1747,7 +1904,7 @@ async function capturePose(pose){
   L.on.delete(fn);
   if (!ok) return null;
   // most of the hold must be usable frames, whatever the frame rate
-  if (got.length < Math.max(MIN_FRAMES, 0.6*seen)) { say(info.name + ' skipped, lost you.'); status(`${info.name}: ${got.length} of ${seen} frames usable`); return null; }
+  if (got.length < Math.max(MIN_FRAMES, 0.6*seen)) { say(info.name + ' skipped, lost you.'); note(`${info.name}: ${got.length} of ${seen} frames usable`); return null; }
   beep(990, 0.12);
   return got;
 }
@@ -1756,18 +1913,20 @@ async function calibrate(poses){
   if (busy === 'cal') { cancelled.cal = true; return; }
   if (!claim('cal')) return;
   const btn = $('calBtn'); btn.textContent = 'Stop'; btn.classList.add('on');
-  // poses not redone keep their saved medians
-  const caps = {};
+  // poses not redone keep their saved medians, and the walls stay unless swept again
+  const oldWalls = cal && cal.wallL ? {wallL:cal.wallL, wallR:cal.wallR} : null, caps = {};
   for (const p of RT.POSES) caps[p] = cal && cal[p] ? [cal[p]] : [];
   let got = 0;
   for (const p of poses) {
+    // the sweep needs a standing capture to know left from right
+    if (p === 'sweep' && caps.stand.length && (!cal || cal.stand !== caps.stand[0])) setCal(caps);
     const g = await capturePose(p);
     if (cancelled.cal || !L.src) break;
     if (g) { caps[p] = g; got++; }
   }
   if (got && caps.stand.length) {
-    const f = L.cur;
-    cal = RT.buildCal(caps, {at:new Date().toISOString(), aspect:f ? f.aspect : null, w:f ? f.w : null, h:f ? f.h : null, model:L.model, camera:L.cam ? L.cam.label : ''});
+    setCal(caps);
+    if (!caps.sweep && oldWalls) Object.assign(cal, oldWalls);
     L.cal = cal; store.set('cal', cal);
     say(poses.length > 1 ? 'Calibration saved.' : 'Saved.');
   } else if (got) say('Stand first, then the rest.');
@@ -1775,21 +1934,25 @@ async function calibrate(poses){
   release('cal'); status(statusLine()); renderCal();
 }
 
+function setCal(caps){
+  const f = L.cur;
+  cal = RT.buildCal(caps, {at:new Date().toISOString(), aspect:f ? f.aspect : null, w:f ? f.w : null, h:f ? f.h : null, model:L.model, camera:L.cam ? L.cam.label : ''});
+  L.cal = cal;
+}
 function renderCal(){
   const c = cal, row = (pose, txt) => `<div><span>${POSE_INFO[pose].name}</span><span>${txt} <button class="redo" data-pose="${pose}" aria-label="Redo ${POSE_INFO[pose].name}">redo</button></span></div>`;
   const stance = s => s ? `level ${n(RT.levelFromRatio(s.ratios.world, c.square.ratios.world), 2)} · hips ${n(s.ratios.world*100)}% · feet ${n(s.footWorld, 1)} S` : '-';
-  $('calOut').innerHTML = !c || !c.stand ? 'Standing, square stance, staggered stance, then each wall. About a minute; the iPad talks you through it.' :
+  $('calOut').innerHTML = !c || !c.stand ? 'Standing, square stance and staggered stance, then shuffle side to side, wall to wall. About 40 seconds; the iPad talks you through it.' :
     `<div class="rows">` +
     row('stand', c.stand.world ? `hips ${n(c.stand.world.hipH, 2)} m · S ${n(c.stand.world.S, 2)} m` : `hips ${n(c.stand.img.hipH, 3)}`) +
     row('square', c.square ? `hips ${n(c.square.ratios.world*100)}% · feet ${n(c.square.footWorld, 1)} S` : '-') +
     row('stagger', c.stagger && c.square ? stance(c.stagger) : '-') +
-    row('wallL', c.wallL ? `x ${n(c.wallL.hipX, 2)}` : '-') +
-    row('wallR', c.wallR ? `x ${n(c.wallR.hipX, 2)}` : '-') +
-    `</div><div>${c.at.slice(0, 16).replace('T', ' ')} · ${c.w}x${c.h} · ${c.model}</div>` +
+    row('sweep', c.wallL ? `hips from x ${n(c.wallL.hipX, 2)} to ${n(c.wallR.hipX, 2)}` : '-') +
+    `</div><div>${(c.at || '').slice(0, 16).replace('T', ' ')} · ${c.w}x${c.h} · ${c.model}</div>` +
     (c.w && L.cur && (L.cur.w !== c.w || L.cur.h !== c.h) ? `<div class="verdict bad">The camera picture changed since; calibrate again.</div>` : '');
   $('calSave').hidden = !c;
 }
-$('calBtn').addEventListener('click', () => calibrate(RT.POSES));
+$('calBtn').addEventListener('click', () => calibrate([...RT.POSES, 'sweep']));
 $('calOut').addEventListener('click', e => { const b = e.target.closest('.redo'); if (b) calibrate([b.dataset.pose]); });
 $('calSave').addEventListener('click', () => cal && saveFile(`room-time-cal-${stamp()}.json`, jsonBlob(cal)));
 renderCal();
@@ -1857,6 +2020,74 @@ function renderLive(){
 }
 L.drawers.push(renderLive);
 L.hudLines.push(f => f && f.r ? `level ${n(f.r.level, 2)} ${f.r.zone || ''}  feet ${n(f.r.footWorld, 2)} S  elbows ${n(f.r.elbowL, 2)} ${n(f.r.elbowR, 2)}  floor ${n(f.r.floorX, 2)}` : '');
+L.hudLines.push(f => f && f.r && f.r.headRatio != null ? `head ${n(f.r.headRatio*100)}% of standing  out ${n(f.r.headX*100)} cm` : '');
+
+/* ---------- moves in the camera check ---------- */
+const MOVE_NAME = {shot:'Shot', sprawl:'Sprawl', snap:'Snap'};
+let labDet = new RT.MoveDetector();
+L.on.add(f => {
+  if (play.on) return;
+  const ev = labDet.push(f.m && f.r ? RT.moveInput(f.t, f.m, f.r) : null);
+  if (!ev) return;
+  beep(880, 0.08); say(MOVE_NAME[ev.type]);
+  $('liveMove').textContent = ev.type === 'snap' ? `Snap: hands ${n(ev.from, 2)} to ${n(ev.to, 2)} torso lengths in ${n(ev.ms)} ms`
+    : `${MOVE_NAME[ev.type]}: level ${n(ev.from, 2)} to ${n(ev.to, 2)} in ${n(ev.ms)} ms, stepped in ${n(ev.grow*100)}%`;
+});
+
+/* ---------- camera play ---------- */
+// The game runs from the camera: each frame writes your smoothed level, floor position and head height into
+// the game (S.cam), and the move detector's shots, sprawls and snaps go in as moves.
+const play = {on:false, det:null, fl:null, fx:null, fh:null, fhx:null};
+L.on.add(f => {
+  const G = globalThis.RoomTimeGame, S = G && G.S;
+  if (!play.on || !S || !S.cam) return;
+  const r = f.r, t = f.t/1000;
+  if (!r || r.level == null) { S.cam.seen = false; return; }
+  S.cam.seen = S.cam.seenOnce = true;
+  S.cam.level = play.fl.filter(r.level, t);
+  S.cam.floorX = r.floorX == null ? 0 : play.fx.filter(r.floorX, t);
+  // your eyes: standing eye height times your head height against standing; your head out over your hips moves the view
+  if (r.headRatio != null) S.cam.head = {eye:1.66*play.fh.filter(r.headRatio, t), dx:play.fhx.filter(r.headX || 0, t), roll:0};
+  const ev = play.det.push(RT.moveInput(f.t, f.m, r));
+  if (ev && S.mode === 'work') G.camMove(ev.type, ev.from);
+});
+// the warm-in's circling sets the walls: every hip position while it runs, the range only widens
+L.on.add(f => {
+  const S = globalThis.RoomTimeGame && globalThis.RoomTimeGame.S;
+  if (!play.on || !S || !S.cam || !f.m || S.mode !== 'work' || S.plan[S.r].phase !== 'warm' || !cal || !cal.stand) return;
+  if (!play.walls) play.walls = new RT.WallTracker(cal.stand.img.dir);
+  play.walls.push(f.m.hipX);
+  if (f.t - play.wallAt < 500) return;
+  play.wallAt = f.t;
+  const w = play.walls.walls();
+  if (w) { Object.assign(cal, w); L.cal = cal; store.set('cal', cal); }
+});
+function dock(on){
+  const v = $('labView');
+  (on ? $('pip') : $('labStage')).prepend(v);
+  requestAnimationFrame(globalThis.RoomTimeLab.fitView);
+}
+// Camera play opens with the warm-up calibration: the three holds, then the warm-in round, whose circling sets the walls.
+async function startCamPlay(){
+  globalThis.RoomTimeLab.unlockAudio();
+  Object.assign(play, {on:true, det:new RT.MoveDetector(), fl:new RT.OneEuro(1.5, 0.6), fx:new RT.OneEuro(1.0, 0.4), fh:new RT.OneEuro(1.5, 0.6), fhx:new RT.OneEuro(1.0, 0.4), walls:null, wallAt:-1e9});
+  dock(true);
+  const G = globalThis.RoomTimeGame;
+  G.start(false, true);
+  G.S.calibNote = 'Starting the camera';
+  await globalThis.RoomTimeLab.startCamera();
+  if (!L.src) { play.on = false; dock(false); say('The camera did not start. Try Camera check.'); G.S.calibNote = 'The camera did not start'; return; }
+  play.skipCal = false;
+  for (let tries = 0; tries < 2 && play.on && !play.skipCal; tries++) {
+    await calibrate(RT.POSES);
+    if (cal && cal.stand && cal.square) break;
+  }
+  if (play.on && G.S && G.S.mode === 'calib') G.begin();
+}
+globalThis.RoomTimeGame.skipCalib = () => { play.skipCal = true; cancelled.cal = true; };
+globalThis.RoomTimeGame.onQuit = () => { play.on = false; globalThis.RoomTimeLab.stopSource(); dock(false); };
+$('camPlayBtn').addEventListener('click', startCamPlay);
+globalThis.RoomTimeLab.play = play;
 
 /* ---------- recording and video files ---------- */
 // Record: the camera video through MediaRecorder plus a landmark trace on the same clock (ms from the
@@ -1967,6 +2198,590 @@ L.closers.push(() => { stopRecord(); endFile(); });
 
 Object.assign(globalThis.RoomTimeLab, {store, saveFile, jsonBlob, stamp, device, wait, claim, release, cancelled});
 })();
+</script>
+<script type="module" id="rt-3d">
+// Room Time 3D: the room, the opponent and your arms, first person, drawn under the game's 2D overlay.
+// The opponent is built in code (no model file): a jointed body posed for each state the game already has.
+// It only reads the game (globalThis.RoomTimeGame). If three.js or WebGL is missing, the 2D view stays.
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { MarchingCubes } from 'three/addons/objects/MarchingCubes.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const G = globalThis.RoomTimeGame;
+const canvas = document.getElementById('cv3d'), stage = document.getElementById('stage');
+const R3 = globalThis.RoomTime3D = {ok:false, view:null};
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a)*t;
+const ease = t => { t = clamp(t, 0, 1); return t*t*(3 - 2*t); };
+
+let renderer = null;
+try {
+  renderer = new THREE.WebGLRenderer({canvas, antialias:true, powerPreference:'high-performance'});
+} catch(e) { console.warn('Room Time: 3D unavailable, staying 2D', e); }
+
+if (renderer) {
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b1520);
+scene.fog = new THREE.Fog(0x0b1520, 10, 24);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.35;
+
+const camera = new THREE.PerspectiveCamera(62, 1.6, 0.05, 60);
+scene.add(camera);
+
+/* ---------- textures ---------- */
+function noiseCanvas(size, amt, base){
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const x = c.getContext('2d'), img = x.createImageData(size, size);
+  for (let i = 0; i < img.data.length; i += 4) { const v = base + (Math.random() - 0.5)*amt; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255; }
+  x.putImageData(img, 0, 0); return c;
+}
+const bumpTex = new THREE.CanvasTexture(noiseCanvas(256, 70, 128));
+bumpTex.wrapS = bumpTex.wrapT = THREE.RepeatWrapping; bumpTex.repeat.set(3, 3);
+
+// The mat: 16 m square, the 9 m circle with the orange zone band, center circle and start lines.
+const MAT = 16, PX = 128, CIRCLE = 4.5, BAND = 0.6;
+function matTexture(){
+  const c = document.createElement('canvas'); c.width = c.height = MAT*PX;
+  const x = c.getContext('2d'), m = MAT*PX/2, r = v => v*PX;
+  x.fillStyle = '#183654'; x.fillRect(0, 0, c.width, c.height);
+  x.fillStyle = '#a9472f'; x.beginPath(); x.arc(m, m, r(CIRCLE), 0, Math.PI*2); x.fill();
+  x.fillStyle = '#21466b'; x.beginPath(); x.arc(m, m, r(CIRCLE - BAND), 0, Math.PI*2); x.fill();
+  // seams where the mat sections meet
+  x.strokeStyle = 'rgba(0,0,0,.22)'; x.lineWidth = 3;
+  for (let k = -MAT/2; k <= MAT/2; k += 2) { x.beginPath(); x.moveTo(m + r(k), 0); x.lineTo(m + r(k), c.height); x.stroke(); }
+  x.strokeStyle = 'rgba(231,236,240,.85)'; x.lineWidth = r(0.05);
+  x.beginPath(); x.arc(m, m, r(CIRCLE), 0, Math.PI*2); x.stroke();
+  x.beginPath(); x.arc(m, m, r(0.5), 0, Math.PI*2); x.stroke();
+  x.lineWidth = r(0.05);
+  x.strokeStyle = '#d6483d'; x.beginPath(); x.moveTo(m - r(0.5), m - r(0.15)); x.lineTo(m - r(0.5), m + r(0.15)); x.stroke();
+  x.strokeStyle = '#3f80d6'; x.beginPath(); x.moveTo(m + r(0.5), m - r(0.15)); x.lineTo(m + r(0.5), m + r(0.15)); x.stroke();
+  // scuffs and wear
+  x.globalAlpha = 0.05;
+  for (let i = 0; i < 900; i++) { x.fillStyle = Math.random() < 0.5 ? '#000' : '#fff'; x.beginPath(); x.ellipse(Math.random()*c.width, Math.random()*c.height, 4 + Math.random()*40, 2 + Math.random()*8, Math.random()*3, 0, Math.PI*2); x.fill(); }
+  x.globalAlpha = 1;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return t;
+}
+
+/* ---------- room ---------- */
+const MAT_Z = -1.0; // the circle's center sits between you and him
+const mat = new THREE.Mesh(new THREE.PlaneGeometry(MAT, MAT),
+  new THREE.MeshStandardMaterial({map:matTexture(), roughness:0.42, metalness:0, bumpMap:bumpTex, bumpScale:0.4}));
+mat.rotation.x = -Math.PI/2; mat.position.z = MAT_Z; mat.receiveShadow = true; scene.add(mat);
+
+const ROOM = 9;
+const wallMat = new THREE.MeshStandardMaterial({color:0x121f2c, roughness:0.9});
+const padA = new THREE.MeshStandardMaterial({color:0x1d3550, roughness:0.6, bumpMap:bumpTex, bumpScale:0.3});
+const padB = new THREE.MeshStandardMaterial({color:0x172b40, roughness:0.6, bumpMap:bumpTex, bumpScale:0.3});
+for (const [x, z, ry] of [[0, MAT_Z - ROOM, 0], [0, MAT_Z + ROOM, Math.PI], [-ROOM, MAT_Z, Math.PI/2], [ROOM, MAT_Z, -Math.PI/2]]) {
+  const wall = new THREE.Group(); wall.position.set(x, 0, z); wall.rotation.y = ry; scene.add(wall);
+  const w = new THREE.Mesh(new THREE.PlaneGeometry(ROOM*2, 7), wallMat); w.position.y = 3.5; wall.add(w);
+  for (let i = -ROOM + 0.6; i < ROOM; i += 1.2) {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(1.16, 1.9, 0.12), (Math.round(i/1.2) % 2) ? padA : padB);
+    p.position.set(i, 0.95, 0.06); p.receiveShadow = true; wall.add(p);
+  }
+}
+const ceil = new THREE.Mesh(new THREE.PlaneGeometry(ROOM*2, ROOM*2), new THREE.MeshStandardMaterial({color:0x0d1620, roughness:1}));
+ceil.rotation.x = Math.PI/2; ceil.position.set(0, 7, MAT_Z); scene.add(ceil);
+const lampMat = new THREE.MeshStandardMaterial({color:0xffffff, emissive:0xfff4e0, emissiveIntensity:3});
+for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+  const l = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.08, 0.5), lampMat); l.position.set(i*4, 6.9, MAT_Z + j*4); scene.add(l);
+}
+
+/* ---------- lights: gym fixtures overhead, a rim light behind him for reads ---------- */
+scene.add(new THREE.HemisphereLight(0xe4ecf4, 0x1b2c3e, 0.55));
+const key = new THREE.DirectionalLight(0xfff3e2, 2.4);
+key.position.set(1.5, 7, 2.5); key.castShadow = true;
+key.shadow.mapSize.set(1024, 1024); key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02;
+Object.assign(key.shadow.camera, {left:-3, right:3, top:3, bottom:-3, near:1, far:15});
+scene.add(key); scene.add(key.target);
+const fill = new THREE.DirectionalLight(0xbcd2ff, 0.6); fill.position.set(-3, 4, 4); scene.add(fill);
+const rim = new THREE.SpotLight(0xffffff, 0, 8, 0.7, 0.6, 1.2); scene.add(rim); scene.add(rim.target);
+const back = new THREE.DirectionalLight(0xdfe8ff, 0.9); back.position.set(0, 5, -8); scene.add(back);
+
+/* ---------- materials ---------- */
+const skinMat = (hex) => new THREE.MeshPhysicalMaterial({color:hex, roughness:0.5, metalness:0, sheen:0.4, sheenRoughness:0.5, sheenColor:new THREE.Color(0xffc9ab),
+  clearcoat:0.22, clearcoatRoughness:0.5, bumpMap:bumpTex, bumpScale:0.06});
+const SKIN_OPP = skinMat(0xa06f52), SKIN_YOU = skinMat(0xc29474);
+const SINGLET = new THREE.MeshPhysicalMaterial({color:0x9c1d1d, roughness:0.34, sheen:1, sheenRoughness:0.32, sheenColor:new THREE.Color(0xff7070), clearcoat:0.12});
+const SHOE = new THREE.MeshStandardMaterial({color:0x23272f, roughness:0.55});
+const HAIR = new THREE.MeshStandardMaterial({color:0x1c130d, roughness:0.85, bumpMap:bumpTex, bumpScale:0.8});
+const GEAR = new THREE.MeshStandardMaterial({color:0x14181e, roughness:0.4, metalness:0.05});
+const EYE = new THREE.MeshPhysicalMaterial({color:0x1e140e, roughness:0.15, clearcoat:1});
+const SCLERA = new THREE.MeshPhysicalMaterial({color:0xcfc6b8, roughness:0.25, clearcoat:1});
+const SKIN_HEAD = skinMat(0xa06f52);
+const GLOWABLE = [SKIN_OPP, SKIN_HEAD];
+// The opponent wears one material: skin, with the singlet and shoes painted in where the cloth and shoe scores are positive.
+SKIN_OPP.onBeforeCompile = (sh) => {
+  sh.uniforms.uSinglet = {value:SINGLET.color}; sh.uniforms.uShoe = {value:SHOE.color};
+  sh.vertexShader = 'attribute float cloth;\nattribute float shoe;\nvarying float vCloth;\nvarying float vShoe;\n' +
+    sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vCloth = cloth; vShoe = shoe;');
+  sh.fragmentShader = 'uniform vec3 uSinglet;\nuniform vec3 uShoe;\nvarying float vCloth;\nvarying float vShoe;\n' + sh.fragmentShader
+    .replace('#include <color_fragment>', '#include <color_fragment>\n  float cl = smoothstep(-0.003, 0.003, vCloth), so = smoothstep(-0.003, 0.003, vShoe);\n  diffuseColor.rgb = mix(mix(diffuseColor.rgb, uSinglet, cl), uShoe, so);')
+    .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(mix(roughnessFactor, 0.34, cl), 0.6, so);');
+};
+
+// A limb along -Y from its joint (your first-person arms): a lathe whose radius follows prof(t), ends rounded.
+function lathe(len, prof, opts = {}){
+  const n = 28, pts = [], over = opts.over == null ? 0.04 : opts.over, cap = opts.cap || 0.12;
+  for (let i = 0; i <= n; i++) {
+    const t = i/n, e = Math.min(t, 1 - t)/cap, round = e >= 1 ? 1 : Math.sqrt(Math.max(0, 1 - (1 - e)*(1 - e)));
+    pts.push(new THREE.Vector2(Math.max(0.0005, prof(t)*round), (over - t*(len + 2*over))));
+  }
+  const g = new THREE.LatheGeometry(pts, 32); g.computeVertexNormals(); return g;
+}
+const bump = (t, at, w) => Math.exp(-((t - at)*(t - at))/(2*w*w));
+function part(parent, geo, mat, sx = 1, sz = 1){
+  const m = new THREE.Mesh(geo, mat); m.scale.set(sx, 1, sz); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m;
+}
+
+/* ---------- the opponent: one sculpted, skinned body ---------- */
+// The body is a sum of soft shapes (bones, muscle bellies, head and face) in a rest pose, turned into one
+// surface with marching cubes, then skinned to a skeleton so it bends like a body instead of a jointed toy.
+// Rest pose: standing, arms out 0.3 rad, legs out 0.1 rad. Meters; +x his left, +y up, +z his front.
+const REST_ARM = 0.3, REST_LEG = 0.1;
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const SK = {root:V(0, 0.975, 0), spine:V(0, 1.06, 0), chest:V(0, 1.24, 0), neck:V(0, 1.5, -0.01), head:V(0, 1.59, 0), crown:V(0, 1.8, 0)};
+const dirA = s => V(s*Math.sin(REST_ARM), -Math.cos(REST_ARM), 0), dirL = s => V(s*Math.sin(REST_LEG), -Math.cos(REST_LEG), 0);
+for (const [n, s] of [['L', 1], ['R', -1]]) {
+  SK['sh' + n] = V(s*0.19, 1.45, -0.01);
+  SK['el' + n] = SK['sh' + n].clone().addScaledVector(dirA(s), 0.29);
+  SK['wr' + n] = SK['el' + n].clone().addScaledVector(dirA(s), 0.26);
+  SK['fi' + n] = SK['wr' + n].clone().addScaledVector(dirA(s), 0.17);
+  SK['hip' + n] = V(s*0.1, 0.925, 0);
+  SK['kn' + n] = SK['hip' + n].clone().addScaledVector(dirL(s), 0.43);
+  SK['an' + n] = SK['kn' + n].clone().addScaledVector(dirL(s), 0.42);
+  SK['to' + n] = SK['an' + n].clone().add(V(0, -0.05, 0.17));
+}
+const ALONG = (a, b, t) => a.clone().lerp(b, t);
+
+function sculpt(){
+  // [kind, ...] capsules: ['c', a, b, ra, rb, reach, weight]; ellipsoids: ['e', center, radii, reach, weight]
+  const P = [];
+  const cap = (a, b, ra, rb, s = 1.3, w = 1) => P.push(['c', a, b, ra, rb, s, w]);
+  const ell = (c, r, s = 1.35, w = 1) => P.push(['e', c, r, s, w]);
+  // torso
+  ell(V(0, 0.965, -0.01), V(0.165, 0.105, 0.115));                 // pelvis
+  for (const s of [-1, 1]) ell(V(s*0.072, 0.935, -0.065), V(0.08, 0.085, 0.07)); // glutes
+  ell(V(0, 1.09, 0), V(0.14, 0.12, 0.1));                            // waist
+  ell(V(0, 1.27, -0.005), V(0.158, 0.165, 0.112));                   // rib cage
+  ell(V(0, 1.375, -0.012), V(0.172, 0.085, 0.105));                  // upper chest
+  ell(V(0, 1.13, 0.06), V(0.075, 0.1, 0.04), 1.3, 0.7);              // abs
+  for (const s of [-1, 1]) {
+    ell(V(s*0.078, 1.335, 0.068), V(0.078, 0.058, 0.045), 1.3);       // pecs
+    ell(V(s*0.118, 1.27, -0.045), V(0.055, 0.12, 0.055), 1.3, 0.8);   // lats
+    ell(V(s*0.07, 1.04, -0.02), V(0.07, 0.08, 0.07), 1.3, 0.6);       // obliques / low back
+    cap(V(s*0.02, 1.48, -0.035), V(s*0.155, 1.445, -0.03), 0.05, 0.034, 1.3, 0.9); // traps
+    ell(V(s*0.195, 1.43, -0.005), V(0.058, 0.065, 0.064), 1.3);       // deltoids
+  }
+  // neck and head
+  cap(V(0, 1.41, -0.015), V(0, 1.6, -0.004), 0.06, 0.054, 1.3);
+  // arms and legs
+  for (const [n, s] of [['L', 1], ['R', -1]]) {
+    const sh = SK['sh' + n], el = SK['el' + n], wr = SK['wr' + n], fi = SK['fi' + n];
+    cap(sh, el, 0.05, 0.039, 1.25);
+    ell(ALONG(sh, el, 0.5).add(V(0, 0, 0.022)), V(0.04, 0.085, 0.04), 1.3, 0.85);  // biceps
+    ell(ALONG(sh, el, 0.42).add(V(0, 0, -0.025)), V(0.042, 0.1, 0.04), 1.3, 0.85); // triceps
+    cap(el, wr, 0.042, 0.029, 1.25);
+    ell(ALONG(el, wr, 0.25).add(V(0, 0, 0.01)), V(0.042, 0.08, 0.04), 1.3, 0.8);   // forearm
+    ell(ALONG(wr, fi, 0.35), V(0.022, 0.055, 0.043), 1.25);                       // palm
+    cap(ALONG(wr, fi, 0.55), fi, 0.02, 0.014, 1.2);                               // fingers
+    const hp = SK['hip' + n], kn = SK['kn' + n], an = SK['an' + n], to = SK['to' + n];
+    cap(hp, kn, 0.082, 0.052, 1.25);
+    ell(ALONG(hp, kn, 0.45).add(V(-s*0.005, 0, 0.032)), V(0.068, 0.15, 0.062), 1.3, 0.85); // quads
+    ell(ALONG(hp, kn, 0.4).add(V(0, 0, -0.035)), V(0.06, 0.15, 0.055), 1.3, 0.8);        // hamstrings
+    ell(ALONG(hp, kn, 0.28).add(V(-s*0.04, 0, 0)), V(0.05, 0.11, 0.055), 1.3, 0.7);       // inner thigh
+    ell(kn.clone().add(V(0, 0, 0.012)), V(0.048, 0.05, 0.05), 1.3, 0.8);                  // knee
+    cap(kn, an, 0.048, 0.032, 1.25);
+    ell(ALONG(kn, an, 0.3).add(V(0, 0, -0.03)), V(0.048, 0.095, 0.05), 1.3, 0.85);        // calf
+    cap(an.clone().add(V(0, 0.07, 0)), an, 0.05, 0.05, 1.2);                              // shoe cuff
+    ell(ALONG(an, to, 0.45).add(V(0, -0.022, 0)), V(0.052, 0.045, 0.135), 1.2);           // shoe
+  }
+  return P;
+}
+
+function polygonize(prims, RES = 112, H = 0.97, C = V(0, 0.93, 0), smoothing = 2){
+  const half = RES/2, T = 0.5;
+  const mc = new MarchingCubes(RES, SKIN_OPP, false, false, 200000);
+  const field = mc.field, size = RES, size2 = RES*RES;
+  const toI = (v, c) => Math.round((v - c)/H*half + half), toW = (i, c) => c + (i - half)/half*H;
+  const kern = (u, s) => { if (u >= s) return 0; const a = 1 - (u/s)*(u/s), b = 1 - 1/(s*s); return T*(a*a*a)/(b*b*b); };
+  const ab = V(0, 0, 0), q = V(0, 0, 0), p = V(0, 0, 0);
+  for (const pr of prims) {
+    let lo, hi;
+    if (pr[0] === 'c') { const r = Math.max(pr[3], pr[4])*pr[5]; lo = pr[1].clone().min(pr[2]).subScalar(r); hi = pr[1].clone().max(pr[2]).addScalar(r); ab.subVectors(pr[2], pr[1]); }
+    else { lo = pr[1].clone().sub(pr[2].clone().multiplyScalar(pr[3])); hi = pr[1].clone().add(pr[2].clone().multiplyScalar(pr[3])); }
+    const x0 = Math.max(1, toI(lo.x, C.x)), x1 = Math.min(size - 2, toI(hi.x, C.x));
+    const y0 = Math.max(1, toI(lo.y, C.y)), y1 = Math.min(size - 2, toI(hi.y, C.y));
+    const z0 = Math.max(1, toI(lo.z, C.z)), z1 = Math.min(size - 2, toI(hi.z, C.z));
+    const ab2 = ab.lengthSq();
+    for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      p.set(toW(x, C.x), toW(y, C.y), toW(z, C.z));
+      let u, s, w;
+      if (pr[0] === 'c') {
+        const t = Math.max(0, Math.min(1, q.subVectors(p, pr[1]).dot(ab)/ab2));
+        q.copy(pr[1]).addScaledVector(ab, t);
+        u = p.distanceTo(q)/(pr[3] + (pr[4] - pr[3])*t); s = pr[5]; w = pr[6];
+      } else {
+        const dx = (p.x - pr[1].x)/pr[2].x, dy = (p.y - pr[1].y)/pr[2].y, dz = (p.z - pr[1].z)/pr[2].z;
+        u = Math.sqrt(dx*dx + dy*dy + dz*dz); s = pr[3]; w = pr[4];
+      }
+      if (u < s) field[z*size2 + y*size + x] += w*kern(u, s);
+    }
+  }
+  mc.isolation = T;
+  mc.update();
+  const n = mc.count, pos = new Float32Array(n*3), nor = new Float32Array(n*3);
+  for (let i = 0; i < n; i++) {
+    pos[i*3] = C.x + mc.positionArray[i*3]*H; pos[i*3 + 1] = C.y + mc.positionArray[i*3 + 1]*H; pos[i*3 + 2] = C.z + mc.positionArray[i*3 + 2]*H;
+    nor[i*3] = mc.normalArray[i*3]; nor[i*3 + 1] = mc.normalArray[i*3 + 1]; nor[i*3 + 2] = mc.normalArray[i*3 + 2];
+  }
+  mc.geometry.dispose();
+  let g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.deleteAttribute('normal'); g = mergeVertices(g, 1e-5);
+  taubin(g, smoothing); g.computeVertexNormals();
+  return g;
+}
+
+// Taubin smoothing: takes out the marching cubes' grid steps without shrinking the shape.
+function taubin(g, passes){
+  if (!passes) return;
+  const pos = g.attributes.position.array, n = pos.length/3, idx = g.index.array, nb = Array.from({length:n}, () => new Set());
+  for (let k = 0; k < idx.length; k += 3) { const a = idx[k], b = idx[k + 1], c = idx[k + 2]; nb[a].add(b).add(c); nb[b].add(a).add(c); nb[c].add(a).add(b); }
+  const nbs = nb.map(st => Array.from(st)), tmp = new Float32Array(pos.length);
+  const step = (lam) => {
+    for (let i = 0; i < n; i++) {
+      const ns = nbs[i]; if (!ns.length) { tmp[i*3] = pos[i*3]; tmp[i*3 + 1] = pos[i*3 + 1]; tmp[i*3 + 2] = pos[i*3 + 2]; continue; }
+      let x = 0, y = 0, z = 0; for (const j of ns) { x += pos[j*3]; y += pos[j*3 + 1]; z += pos[j*3 + 2]; }
+      const m = 1/ns.length;
+      tmp[i*3] = pos[i*3] + lam*(x*m - pos[i*3]); tmp[i*3 + 1] = pos[i*3 + 1] + lam*(y*m - pos[i*3 + 1]); tmp[i*3 + 2] = pos[i*3 + 2] + lam*(z*m - pos[i*3 + 2]);
+    }
+    pos.set(tmp);
+  };
+  for (let p = 0; p < passes; p++) { step(0.5); step(-0.53); }
+}
+
+// The head, sculpted on a finer grid (about 4 mm) and carried rigidly by the head bone.
+function sculptHead(){
+  const P = [];
+  const cap = (a, b, ra, rb, s = 1.25, w = 1) => P.push(['c', a, b, ra, rb, s, w]);
+  const ell = (c, r, s = 1.25, w = 1) => P.push(['e', c, r, s, w]);
+  cap(V(0, 1.53, -0.012), V(0, 1.62, -0.006), 0.05, 0.05, 1.2);          // neck, inside the body's
+  ell(V(0, 1.716, -0.014), V(0.077, 0.094, 0.098));                      // cranium
+  ell(V(0, 1.722, 0.028), V(0.067, 0.058, 0.06), 1.2, 0.7);              // forehead
+  ell(V(0, 1.655, 0.022), V(0.062, 0.062, 0.066));                       // midface
+  for (const s of [-1, 1]) {
+    cap(V(s*0.06, 1.64, -0.012), V(s*0.016, 1.59, 0.055), 0.022, 0.017, 1.2, 0.9); // jawline
+    ell(V(s*0.044, 1.645, 0.042), V(0.026, 0.028, 0.022), 1.2, 0.35);  // cheeks
+    ell(V(s*0.046, 1.678, 0.052), V(0.02, 0.011, 0.018), 1.2, 0.5);    // cheekbones
+    ell(V(s*0.031, 1.684, 0.077), V(0.017, 0.011, 0.012), 1.3, -0.9);  // eye sockets
+    ell(V(s*0.013, 1.652, 0.089), V(0.008, 0.007, 0.008), 1.2, 0.55);  // nostril wings
+    ell(V(s*0.079, 1.67, -0.008), V(0.011, 0.03, 0.02), 1.2, 0.8);     // ears
+  }
+  ell(V(0, 1.589, 0.056), V(0.026, 0.021, 0.021), 1.2, 0.85);            // chin
+  ell(V(0, 1.7, 0.07), V(0.058, 0.012, 0.02), 1.2, 0.5);                 // brow ridge
+  cap(V(0, 1.69, 0.08), V(0, 1.662, 0.096), 0.007, 0.01, 1.2, 0.8);      // nose bridge
+  ell(V(0, 1.656, 0.097), V(0.012, 0.011, 0.011), 1.2, 0.8);             // nose tip
+  ell(V(0, 1.633, 0.084), V(0.021, 0.006, 0.009), 1.2, 0.5);             // upper lip
+  ell(V(0, 1.622, 0.081), V(0.018, 0.006, 0.009), 1.2, 0.5);             // lower lip
+  ell(V(0, 1.628, 0.09), V(0.018, 0.0025, 0.006), 1.3, -0.4);            // mouth line
+  return P;
+}
+
+// Bones: [name, parent, head joint, tail joint, typical radius]. A vertex follows the bone it sits nearest
+// (distance over radius), blended with that bone's parent near the joint.
+const BONES = [
+  ['hips', null, 'root', 'spine', 0.15], ['spine', 'hips', 'spine', 'chest', 0.14], ['chest', 'spine', 'chest', 'neck', 0.16],
+  ['neck', 'chest', 'neck', 'head', 0.06], ['head', 'neck', 'head', 'crown', 0.09]
+];
+for (const n of ['L', 'R']) BONES.push(
+  ['sh' + n, 'chest', 'sh' + n, 'el' + n, 0.05], ['el' + n, 'sh' + n, 'el' + n, 'wr' + n, 0.038], ['wr' + n, 'el' + n, 'wr' + n, 'fi' + n, 0.03],
+  ['hip' + n, 'hips', 'hip' + n, 'kn' + n, 0.075], ['kn' + n, 'hip' + n, 'kn' + n, 'an' + n, 0.045], ['an' + n, 'kn' + n, 'an' + n, 'to' + n, 0.05]);
+
+// What a point wears, as smooth scores in meters (positive inside), so edges follow a clean line:
+// the singlet from the mid-thigh hem to the neckline and straps, leaving the arms out; shoes below the cuff.
+const smooth01 = (a, b, x) => { const t = clamp((x - a)/(b - a), 0, 1); return t*t*(3 - 2*t); };
+function segDist(v, a, b){ const ab = b.clone().sub(a), t = clamp(v.clone().sub(a).dot(ab)/ab.lengthSq(), 0, 1); return v.distanceTo(a.clone().addScaledVector(ab, t)); }
+function clothScore(v){
+  const ax = Math.abs(v.x);
+  let body;
+  if (v.y > 1.15) {
+    const neck = lerp(1.42, 1.32, smooth01(-0.04, 0.05, v.z)) - v.y;
+    const strap = Math.min(Math.min(ax - 0.06, 0.112 - ax), 1.47 - v.y);
+    body = Math.max(neck, strap);
+  } else body = v.y - 0.775;
+  let arms = 9;
+  for (const n of ['L', 'R']) arms = Math.min(arms, segDist(v, SK['sh' + n], SK['el' + n]) - 0.072, segDist(v, SK['el' + n], SK['fi' + n]) - 0.06);
+  return Math.min(body, arms);
+}
+const shoeScore = v => 0.155 - v.y;
+
+function buildOpponent(){
+  const geo = polygonize(sculpt());
+  const pos = geo.attributes.position, n = pos.count;
+  const bi = new Uint16Array(n*4), bw = new Float32Array(n*4), vb = new Array(n), vt = new Float32Array(n);
+  const idx = Object.fromEntries(BONES.map((b, i) => [b[0], i]));
+  const v = V(0, 0, 0), q = V(0, 0, 0), ab = V(0, 0, 0);
+  for (let i = 0; i < n; i++) {
+    v.fromBufferAttribute(pos, i);
+    let best = -1, bd = 1e9, bt = 0;
+    BONES.forEach((b, k) => {
+      const a = SK[b[2]], e = SK[b[3]];
+      ab.subVectors(e, a); const tr = q.subVectors(v, a).dot(ab)/ab.lengthSq(), t = Math.max(0, Math.min(1, tr));
+      q.copy(a).addScaledVector(ab, t);
+      const d = v.distanceTo(q)/b[4];
+      if (d < bd) { bd = d; best = k; bt = tr; }
+    });
+    const b = BONES[best], par = b[1] ? idx[b[1]] : best;
+    const wc = b[1] ? Math.max(0, Math.min(1, (bt + 0.12)/0.24)) : 1;
+    const w = wc*wc*(3 - 2*wc);
+    bi[i*4] = best; bw[i*4] = w; bi[i*4 + 1] = par; bw[i*4 + 1] = 1 - w;
+    vb[i] = b[0]; vt[i] = bt;
+  }
+  geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(bi, 4));
+  geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(bw, 4));
+  const cloth = new Float32Array(n), shoe = new Float32Array(n);
+  for (let i = 0; i < n; i++) { v.fromBufferAttribute(pos, i); cloth[i] = clothScore(v); shoe[i] = shoeScore(v); }
+  geo.setAttribute('cloth', new THREE.BufferAttribute(cloth, 1));
+  geo.setAttribute('shoe', new THREE.BufferAttribute(shoe, 1));
+
+  // the skeleton in the rest pose
+  const bones = {}, list = [];
+  for (const b of BONES) {
+    const bone = new THREE.Bone(); bone.name = b[0];
+    const at = SK[b[2]], parAt = b[1] ? SK[BONES[idx[b[1]]][2]] : V(0, 0, 0);
+    bone.position.subVectors(at, parAt);
+    if (b[1]) bones[b[1]].add(bone);
+    bones[b[0]] = bone; list.push(bone);
+  }
+  const group = new THREE.Group(); scene.add(group);
+  const mesh = new THREE.SkinnedMesh(geo, SKIN_OPP);
+  mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
+  group.add(bones.hips); group.add(mesh);
+  group.updateMatrixWorld(true);
+  mesh.bind(new THREE.Skeleton(list));
+  // headgear and eyes ride the head bone
+  const head = bones.head, hp = SK.head;
+  const at = (o, x, y, z) => { o.position.set(x - hp.x, y - hp.y, z - hp.z); o.castShadow = true; head.add(o); return o; };
+  const headGeo = polygonize(sculptHead(), 80, 0.14, V(0, 1.69, 0.0), 3);
+  headGeo.translate(-hp.x, -hp.y, -hp.z);
+  const headMesh = new THREE.Mesh(headGeo, SKIN_HEAD); headMesh.castShadow = true; headMesh.receiveShadow = true; head.add(headMesh);
+  const hair = at(new THREE.Mesh(new THREE.SphereGeometry(0.1, 48, 24, 0, Math.PI*2, 0, Math.PI*0.45), HAIR), 0, 1.722, -0.02);
+  hair.scale.set(0.8, 0.98, 1.0); hair.rotation.x = -0.36;
+  for (const s of [-1, 1]) {
+    const cup = at(new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.046, 0.026, 32), GEAR), s*0.09, 1.672, -0.008); cup.rotation.z = -s*Math.PI/2;
+    at(new THREE.Mesh(new THREE.SphereGeometry(0.0098, 16, 12), SCLERA), s*0.031, 1.684, 0.066);
+    at(new THREE.Mesh(new THREE.SphereGeometry(0.0052, 12, 10), EYE), s*0.031, 1.684, 0.0735);
+  }
+  // straps from cup to cup: over the crown, around the back, under the chin
+  const strap = (pts) => {
+    const curve = new THREE.CatmullRomCurve3(pts.map(p => V(p[0] - hp.x, p[1] - hp.y, p[2] - hp.z)));
+    const m = new THREE.Mesh(new THREE.TubeGeometry(curve, 40, 0.0065, 8, false), GEAR); m.castShadow = true; head.add(m);
+  };
+  strap([[-0.094, 1.69, -0.01], [-0.07, 1.775, -0.015], [0, 1.818, -0.02], [0.07, 1.775, -0.015], [0.094, 1.69, -0.01]]);
+  strap([[-0.092, 1.665, -0.03], [-0.065, 1.655, -0.09], [0, 1.65, -0.112], [0.065, 1.655, -0.09], [0.092, 1.665, -0.03]]);
+  strap([[-0.088, 1.645, 0.0], [-0.06, 1.597, 0.035], [0, 1.578, 0.07], [0.06, 1.597, 0.035], [0.088, 1.645, 0.0]]);
+  return {group, bones, mesh};
+}
+const t0 = performance.now();
+const opp = buildOpponent();
+R3.buildMs = Math.round(performance.now() - t0); // building the body once on load
+R3.debug = {opp, camera, scene, THREE};
+
+/* ---------- poses ---------- */
+// Legs and upper arms are absolute angles from hanging straight down (thigh a1, shin a2, arm sf; + is toward the player),
+// so the poses hold however far he leans; elbows and knees bend relative to their limb.
+// p: pelvis lean, sp/ch: spine and chest, nk/hd: neck and head (negative looks up), z: lunge toward you.
+const BASE = {p:0.72, sp:0.14, ch:0.08, nk:-0.7, hd:-0.25, z:0, x:0,
+  la1:1.2, la2:-0.5, lab:0.24, ra1:0.75, ra2:-0.75, rab:0.24,
+  lsf:0.95, lsa:0.3, lst:-0.3, le:0.85, rsf:0.85, rsa:0.32, rst:0.3, re:0.95};
+const P = (o) => Object.assign({}, BASE, o);
+const POSES = {
+  stance: P({}),
+  stand: P({p:0.04, sp:0, ch:0, nk:-0.02, hd:0, la1:0.04, la2:-0.02, lab:0.1, ra1:-0.04, ra2:-0.06, rab:0.1, lsf:0.1, lsa:0.12, lst:0, le:0.3, rsf:0.1, rsa:0.12, rst:0, re:0.3}),
+  tell: P({p:0.85, nk:-0.85, la1:1.3, la2:-0.6, ra1:0.9, ra2:-0.85, lsf:0.75, le:1.3, rsf:0.7, re:1.35}),
+  shoot: P({p:1.25, sp:0.15, ch:0.1, nk:-1.15, hd:-0.25, z:0.95, la1:1.45, la2:-1.38, lab:0.15, ra1:-0.45, ra2:-0.85, rab:0.12, lsf:1.45, lsa:0.3, lst:0, le:0.2, rsf:1.4, rsa:0.3, rst:0, re:0.25}),
+  opening: P({p:0.3, nk:-0.3, la1:0.55, la2:-0.3, ra1:0.25, ra2:-0.4, lsf:1.05, lsa:0.14, lst:0, le:0.3, rsf:0.95, rsa:0.16, rst:0, re:0.45}),
+  hand: P({p:0.7, nk:-0.7, z:0.3, lsf:1.25, lsa:0.16, lst:-0.2, le:0.35, rsf:0.9, rsa:0.3, rst:0.2, re:0.95}),
+  press: P({p:0.8, nk:-0.75, z:0.45, la1:1.1, ra1:0.35, ra2:-0.8, lsf:1.3, lsa:0.22, lst:-0.2, le:0.5, rsf:1.3, rsa:0.22, rst:0.2, re:0.5}),
+  stuffed: P({p:1.5, sp:0.05, ch:0.05, nk:0.15, hd:0.2, z:0.62, la1:0.25, la2:-1.5, ra1:0.1, ra2:-1.52, lsf:0.45, lsa:0.4, lst:0, le:0.25, rsf:0.45, rsa:0.4, rst:0, re:0.25}),
+  snapped: P({p:1.15, sp:0.15, ch:0.15, nk:0.65, hd:0.25, z:0.28, la1:0.95, la2:-0.45, ra1:0.55, ra2:-0.7, lsf:0.55, lsa:0.3, lst:0, le:0.2, rsf:0.55, rsa:0.3, rst:0, re:0.2})
+};
+function poseFor(o, t){
+  switch (o.state) {
+    case 'rest': case 'reset': return POSES.stand;
+    case 'tell': return mix(POSES.stance, POSES.tell, ease(o.t/Math.max(o.dur, 0.01)));
+    case 'dip': return mix(POSES.stance, POSES.tell, Math.sin(clamp(o.t/o.dur, 0, 1)*Math.PI));
+    case 'shoot': return mix(POSES.tell, POSES.shoot, ease(o.t/Math.max(o.dur, 0.01)*1.3));
+    case 'opening': case 'hand': case 'press': case 'stuffed': case 'snapped': return POSES[o.state];
+    default: return POSES.stance;
+  }
+}
+function mix(a, b, k){ const o = {}; for (const n in a) o[n] = lerp(a[n], b[n], k); return o; }
+
+const cur = Object.assign({}, POSES.stand);
+let stepPhase = 0, lastOx = 0;
+// Leg lengths for the pose math (match the sculpt's skeleton).
+const LEG = {thigh:0.43, shin:0.42, ankle:0.075, hipDrop:0.05};
+function applyPose(O, q, wx, wz, faceYaw, time, moving){
+  const B = O.bones;
+  // hand fighting and breathing on top of the held pose
+  const fight = q.lsf > 0.6 && q.p > 0.4 ? 1 : 0, br = Math.sin(time*2.1)*0.015;
+  const step = moving ? Math.sin(stepPhase) : 0;
+  B.hips.rotation.x = q.p + br;
+  B.spine.rotation.x = q.sp; B.chest.rotation.x = q.ch - br;
+  B.neck.rotation.x = q.nk; B.head.rotation.x = q.hd;
+  const torso = q.p + br + q.sp + q.ch - br;
+  const arm = (side, f, a, tw, e, ph) => {
+    const pf = fight ? Math.sin(time*3.3 + ph)*0.12 : 0, pe = fight ? Math.sin(time*3.3 + ph + 1)*0.15 : 0;
+    const s = side === 'L' ? 1 : -1;
+    B['sh' + side].rotation.set(-(f + pf + torso), tw, s*(a - REST_ARM));
+    B['el' + side].rotation.set(-(e + pe), 0, 0);
+    B['wr' + side].rotation.set(-0.1, 0, 0);
+  };
+  arm('L', q.lsf, q.lsa, q.lst, q.le, 0); arm('R', q.rsf, q.rsa, q.rst, q.re, 2.2);
+  let drop = 0;
+  const leg = (side, a1, a2, ab, lift) => {
+    const s = side === 'L' ? 1 : -1;
+    a1 += lift; a2 += lift*0.3;
+    B['hip' + side].rotation.set(-a1 - q.p, 0, s*(ab - REST_LEG));
+    B['kn' + side].rotation.set(a1 - a2, 0, 0);
+    B['an' + side].rotation.set(a2, 0, -s*(ab - REST_LEG));
+    // how far below the hips this foot lands
+    const d = (LEG.thigh*Math.cos(a1) + LEG.shin*Math.cos(a2))*Math.cos(ab) + LEG.ankle + LEG.hipDrop*Math.cos(q.p);
+    drop = Math.max(drop, d - Math.max(0, lift)*0.08);
+  };
+  leg('L', q.la1, q.la2, q.lab, Math.max(0, step)*0.18);
+  leg('R', q.ra1, q.ra2, q.rab, Math.max(0, -step)*0.18);
+  B.hips.position.set(0, drop + 0.005 + Math.abs(step)*0.01, 0);
+  O.group.position.set(wx, 0, wz);
+  O.group.rotation.y = faceYaw;
+}
+
+/* ---------- your arms ---------- */
+const you = {};
+for (const [side, s] of [['L', -1], ['R', 1]]) {
+  const el = new THREE.Object3D(); camera.add(el);
+  part(el, lathe(0.3, t => 0.052 + 0.008*bump(t, 0.25, 0.15) - 0.014*t, {cap:0.12}), SKIN_YOU, 1.12, 0.9);
+  const wr = new THREE.Object3D(); wr.position.y = -0.3; el.add(wr);
+  // a loose fist
+  const fist = new THREE.Mesh(new THREE.SphereGeometry(0.05, 24, 16), SKIN_YOU); fist.scale.set(0.95, 1.15, 0.8); fist.position.y = -0.045; wr.add(fist);
+  const knuckles = new THREE.Mesh(new THREE.CapsuleGeometry(0.02, 0.05, 6, 12), SKIN_YOU); knuckles.rotation.z = Math.PI/2; knuckles.position.set(0, -0.085, 0.012); wr.add(knuckles);
+  you[side] = {el, s};
+}
+const tmpV = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+function placeArm(a, hand, elbow){
+  a.el.position.copy(elbow);
+  // the forearm runs from the elbow to the hand along the joint's -Y
+  tmpV.copy(hand).sub(elbow).normalize();
+  a.el.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), tmpV);
+}
+
+/* ---------- read cues: floor ring, rim light, a faint tint ---------- */
+const ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.72, 48), new THREE.MeshBasicMaterial({color:0xd6483d, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false}));
+ring.rotation.x = -Math.PI/2; ring.position.y = 0.01; scene.add(ring);
+const GLOW = {red:0xd6483d, green:0x43b482, amber:0xe2a23b, zone:0xe0703f};
+
+/* ---------- frame ---------- */
+const R = 4.2;  // your floor's -1..1 maps to this many meters each side of the circle's center
+const view = {eye:1.66, x:0, z:0, pitch:0, roll:0};
+R3.view = view;
+function eyeFor(level){
+  // level 1 standing (eye 1.66 m), 0.45 the square stance (1.18 m), lower is a level change or a sprawl
+  return level >= 0.45 ? lerp(1.18, 1.66, (level - 0.45)/0.55) : lerp(0.42, 1.18, Math.max(0, level)/0.45);
+}
+function size(){
+  const r = stage.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 1.75);
+  const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+  if (canvas.width !== Math.round(w*dpr) || canvas.height !== Math.round(h*dpr)) { renderer.setPixelRatio(dpr); renderer.setSize(w, h, false); }
+  camera.aspect = w/h;
+  // about 95 degrees across in landscape, kept sane in portrait
+  camera.fov = clamp(2*Math.atan(Math.tan(50*Math.PI/180)/camera.aspect)*180/Math.PI, 58, 84);
+  camera.updateProjectionMatrix();
+}
+
+let last = 0;
+function frame(ms){
+  requestAnimationFrame(frame);
+  const S = G.S;
+  if (R3.failed || !S || document.getElementById('game').hidden || S.mode === 'done') return;
+  const dt = Math.min(0.05, last ? (ms - last)/1000 : 0.016); last = ms;
+  size();
+  const o = S.opp, time = S.time;
+
+  // where your eyes are
+  const a = S.action, ak = a ? clamp((time - a.t0)/a.dur, 0, 1) : 0, ab = Math.sin(ak*Math.PI);
+  const cam = S.cam && S.cam.head;
+  let eye = cam ? cam.eye : eyeFor(S.level), dz = 0, pitch = 0;
+  if (a && !cam) {
+    if (a.type === 'shot') { eye = lerp(eye, 0.78, ab); dz = -0.75*ab; }
+    else if (a.type === 'sprawl') { eye = lerp(eye, 0.55, ab); dz = 0.3*ab; pitch = -0.35*ab; }
+    else if (a.type === 'snap') pitch = -0.25*Math.sin(ak*Math.PI*2);
+  }
+  const k = Math.min(1, dt*14);
+  view.eye = lerp(view.eye, eye, k); view.z = lerp(view.z, dz, k); view.pitch = lerp(view.pitch, pitch, k);
+  view.x = lerp(view.x, S.youX*R + (cam ? cam.dx : 0), Math.min(1, dt*12));
+  view.roll = lerp(view.roll, cam ? cam.roll : 0, k);
+
+  // the opponent
+  const moving = Math.abs(o.x - lastOx) > dt*0.05; stepPhase += Math.abs(o.x - lastOx)*R*9; lastOx = o.x;
+  const target = poseFor(o, time), rate = (o.state === 'shoot' || o.state === 'stuffed' || o.state === 'snapped') ? 16 : 7;
+  for (const n in cur) cur[n] += (target[n] - cur[n])*Math.min(1, dt*rate);
+  if (o.state === 'circle') cur.p += Math.sin(time*3.2)*0.01;
+  // he faces you from his spot and lunges along that line
+  const bx = o.x*R, bz = -1.75, yaw = Math.atan2(view.x - bx, 0.2 - bz);
+  const ox = bx + Math.sin(yaw)*cur.z, oz = bz + Math.cos(yaw)*cur.z;
+  applyPose(opp, cur, ox, oz, yaw, time, moving && o.state === 'circle');
+
+  // your view: eyes level, turned partly toward him (turn your feet to square him up)
+  camera.position.set(view.x, view.eye, view.z);
+  const look = Math.atan2(ox - view.x, view.z - oz)*0.35;
+  camera.rotation.set(0, 0, 0);
+  // eyes on his hips and hands, the way you watch a wrestler's level
+  camera.rotateY(-look); camera.rotateX(view.pitch - Math.atan2(view.eye - (0.85 + Math.max(0, view.eye - 1.18)*0.6), Math.max(0.6, view.z - oz))); camera.rotateZ(view.roll);
+
+  // your arms, from the prototype's hands at the bottom of the view
+  for (const side of ['L', 'R']) {
+    const s = you[side].s;
+    let hx = s*0.2, hy = -0.27, hz = -0.42;
+    if (a) {
+      if (a.type === 'shot') { hx = s*lerp(0.2, 0.16, ab); hy = lerp(-0.27, -0.2, ab); hz = lerp(-0.42, -0.85, ab); }
+      else if (a.type === 'sprawl') { hy = lerp(-0.27, -0.42, ab); hz = lerp(-0.42, -0.6, ab); }
+      else if (a.type === 'snap') { hy = -0.27 + 0.12*Math.sin(ak*Math.PI) - 0.2*ease((ak - 0.4)/0.6); hz = lerp(-0.42, -0.6, Math.sin(ak*Math.PI)); }
+    }
+    hy += Math.sin(time*2.1 + s)*0.006;
+    placeArm(you[side], new THREE.Vector3(hx, hy, hz), new THREE.Vector3(s*0.33, -0.55, -0.12));
+  }
+
+  // the read he's showing
+  const gk = G.cueGlow(), gcol = gk ? GLOW[gk] : null;
+  const pulse = 0.5 + 0.5*Math.sin(time*28);
+  ring.position.set(ox, 0.01, oz + 0.15);
+  ring.material.color.setHex(gcol || 0xffffff);
+  ring.material.opacity = gcol ? (gk === 'red' ? 0.35 + 0.35*pulse : 0.35) : 0;
+  rim.color.setHex(gcol || 0xffffff); rim.intensity = gcol ? 14 : 0;
+  rim.position.set(ox, 2.6, oz - 1.6); rim.target.position.set(ox, 0.9, oz);
+  for (const m of GLOWABLE) { m.emissive.setHex(gcol || 0); m.emissiveIntensity = gcol ? 0.06 + (gk === 'red' ? 0.06*pulse : 0) : 0; }
+  key.target.position.set(ox*0.5 + view.x*0.5, 0, oz*0.5); key.position.set(key.target.position.x + 1.5, 7, key.target.position.z + 3.5);
+
+  if (R3.debug.cam) R3.debug.cam(camera, opp);
+  try { renderer.render(scene, camera); }
+  catch(e) { console.warn('Room Time: 3D render failed, back to 2D', e); R3.ok = false; R3.failed = true; return; }
+  R3.ok = true;
+}
+requestAnimationFrame(frame);
+}
 </script>
 </body>
 </html>
