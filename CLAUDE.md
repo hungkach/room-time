@@ -24,6 +24,9 @@ Player: Mark, former wrestler, USAW certified, S&C coach. Trains in half a small
 - Metric and classifier functions are pure functions over landmark arrays, separate from rendering, in one `<script id="rt-metrics">` block in `index.html` that adds to `globalThis.RoomTime`. No DOM, no `</script` inside it. Node tests extract that block and run it in `vm`.
 - Landmark traces (JSON) live in `test/fixtures/`. Each classifier gets a test on labeled traces.
 - An always-available debug overlay shows FPS, inference time, landmark visibility and live metric values.
+- Camera check (menu button, Phase 0): `<script id="rt-lab">` (camera, model, loop, overlay) and `<script id="rt-lab-tools">` (bench, soak, calibration, live readouts, recording, video files). They share `globalThis.RoomTimeLab`; each frame goes to the `L.on` listeners as `{t, vt, lm, wl, aspect, w, h, inf, m, fc, r}`.
+- Traces (recorded, from a video file, or fixtures): `{format: 'room-time-trace', version: 1, meta: {aspect, w, h, cal, src, model, ...}, frames: [{t, lm, wl}], labels: [{from, to, label}]}`, landmarks packed as `[x, y, z, visibility]`. Labels are `tall`, `stance` or `deep` for now.
+- Calibration lives in localStorage `roomtime.cal`; the level scale puts the calibrated square stance at 0.45 inside the prototype's band (0.32 to 0.58).
 
 ## Landmarks (MediaPipe Pose, 33 points)
 
@@ -49,12 +52,15 @@ L and R are the player's own left and right.
 ## Commands
 
 - Tests: `node --test test/*.test.mjs` (Node 20+, no dependencies).
+- Regenerate the synthetic fixture: `node test/helpers/make-synthetic-fixture.mjs`.
+- Headless browser check (Chromium, fake camera, about two minutes): `MP_DIR=<dir> sh test/browser/fetch-mediapipe.sh` once, then `MP_DIR=<dir> node test/browser/check.mjs`. It serves MediaPipe from `MP_DIR` (jsdelivr is blocked in the cloud container) and swaps the model for the synthetic figure to drive calibration and recording.
+- `?fast` in the URL shortens the bench and the soak.
 - Serve locally: `npx http-server -p 8080` and open `http://localhost:8080` (localhost counts as secure for the camera).
 - iPad on the LAN needs https: `mkcert -install && mkcert <lan-ip>`, then `npx http-server -S -C <lan-ip>.pem -K <lan-ip>-key.pem -p 8443`, or just push to a branch and test on GitHub Pages.
 
 ## Pitfalls
 
-- Left and right flip under the mirrored front camera. Process the raw frame, mirror only the display (CSS `scaleX(-1)` on video and overlay together), and take the player's right from the shoulders.
+- Left and right flip under the mirrored front camera. Process the raw frame, mirror only the display (CSS `scaleX(-1)` on the wrapper holding the video and skeleton canvas; text, the level meter and the floor strip sit outside it), and take the player's right from the shoulders. Spoken hints never say left or right.
 - Aspect ratio: normalized x and y have different scales; correct before computing angles.
 - Timestamps passed to `detectForVideo` must strictly increase (use `max(now, last + 1)`; video files restart at 0 on a loop).
 - iOS audio and speech only unlock after a tap: create and resume the AudioContext and speak once inside the start tap.
