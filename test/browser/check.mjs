@@ -67,12 +67,18 @@ try {
   });
   const pose = (p) => page.evaluate((p) => Object.assign(window.__pose, { stagger: 0, x: 0, elbowOut: 0.2 }, p), p);
 
-  // shuffling side to side in stance, the player's left wall at +X 1.0 and right at -1.0
-  const sweep = (on) => page.evaluate((on) => {
-    clearInterval(window.__sweep);
-    if (on) window.__sweep = setInterval(() => { window.__pose.x = Math.sin(performance.now() / 600) * 1.05; }, 50);
-    else window.__pose.x = 0;
-  }, on);
+  // shuffling in stance: after the cue, glide at 1 m/s to x and pause there (the player's left is +X)
+  const sweep = (to) => page.evaluate((to) => {
+    clearInterval(window.__sweep); clearTimeout(window.__sweepWait);
+    if (to == null) { window.__pose.x = 0; return; }
+    window.__sweepWait = setTimeout(() => {
+      let last = performance.now();
+      window.__sweep = setInterval(() => {
+        const nw = performance.now(), d = to - window.__pose.x, step = (nw - last) / 1000; last = nw;
+        window.__pose.x += Math.sign(d) * Math.min(Math.abs(d), step);
+      }, 30);
+    }, 1400);
+  }, to);
   // follows the spoken cues on the status line until done() is true; with tallFirst, the square stance starts
   // too tall and is fixed once the coaching says so
   const coached = [];
@@ -83,16 +89,18 @@ try {
       const m = st.match(/Calibrate: (.*)/);
       if (m && !seen.has(m[1])) {
         seen.add(m[1]);
-        if (m[1] === 'Floor') { await pose(POSE['Square stance']); await sweep(true); }
-        else if (m[1] === 'Square stance' && tallFirst) { await sweep(false); await pose({ ...POSE['Square stance'], hip: 0.8 }); }
-        else if (POSE[m[1]]) { await sweep(false); await pose(POSE[m[1]]); }
+        if (m[1] === 'Floor') { await sweep(null); await pose(POSE['Square stance']); }
+        else if (m[1] === 'Square stance' && tallFirst) { await sweep(null); await pose({ ...POSE['Square stance'], hip: 0.8 }); }
+        else if (POSE[m[1]]) { await sweep(null); await pose(POSE[m[1]]); }
       }
+      const side = st.match(/^Floor: to your (left|right)/);
+      if (side && !seen.has(side[0])) { seen.add(side[0]); await sweep(side[1] === 'left' ? 1.05 : -1.05); }
       const fix = st.match(/^Square stance: (.*)/);
       if (fix && !coached.includes(fix[1])) { coached.push(fix[1]); await pose(POSE['Square stance']); }
       await page.waitForTimeout(150);
     }
-    await sweep(false);
-    return [...seen];
+    await sweep(null);
+    return [...seen].filter((x) => !/^Floor: /.test(x));
   };
 
   // calibration, posed per cue
@@ -101,7 +109,7 @@ try {
   check(coached[0] === 'Sink your hips. Bend your knees.', 'stance coaching: a tall stance hears "' + coached.join('", "') + '"');
   const cal = await page.evaluate(() => RoomTimeLab.L.cal);
   check(cal && ['stand', 'square', 'stagger', 'floor'].every((k) => cal[k]), 'calibrated: three holds and the floor from the shuffle (' + cues.join(', ') + ')');
-  check(Math.abs(cal.floor.width - 2.0) < 0.15, `the shuffle measured the floor in meters: ${cal.floor.width.toFixed(2)} m (moved 2.1 m)`);
+  check(Math.abs(cal.floor.width - 2.1) < 0.1 && Math.abs(cal.floor.center) < 0.06, `the directed shuffle measured the floor: ${cal.floor.width.toFixed(2)} m wide (moved 2.1 m), center ${cal.floor.center.toFixed(2)} m`);
   check(Math.abs(cal.square.D - 2.0) < 0.1, `distance from the iPad: ${cal.square.D.toFixed(2)} m (stood at 2.0)`);
   check(!(cal.square.form || []).length, 'the square stance was held once fixed: no form notes');
 
@@ -135,7 +143,8 @@ try {
   check(await page.evaluate(() => RoomTimeGame.S.mode) === 'calib', 'camera play opens with the warm-up calibration');
   check(await page.isHidden('#deck'), 'camera play hides the touch buttons');
   const holds = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
-  check(await page.evaluate(() => RoomTimeGame.S.mode) === 'work' && holds.join() === 'Standing,Square stance,Staggered stance,Floor', 'then the warm-in starts: ' + holds.join(', '));
+  check(await page.evaluate(() => RoomTimeGame.S.mode) === 'work' && holds.join() === 'Standing,Square stance,Staggered stance', 'then the warm-in starts after the holds and the shuffle: ' + holds.join(', '));
+  await page.evaluate(() => { RoomTimeGame.S.clock = 999; });   // keep this round going through the move checks
   // (this container renders camera play at about 2 fps, so the short ?fast shuffle catches only part of the floor)
   const fl = await page.evaluate(() => ({ halfW: RoomTimeGame.S.cam.halfW, floor: RoomTimeLab.L.cal.floor }));
   check(fl.floor && fl.halfW > 0.4 && Math.abs(fl.halfW - fl.floor.width / 2) < 0.01, `camera play knows the floor: ${fl.halfW.toFixed(2)} m each side`);
