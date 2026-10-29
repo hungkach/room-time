@@ -661,6 +661,225 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   // The detector's inputs from one frame's measures and readouts.
   RT.moveInput = (t, m, r) => m && r && num(r.level) ? {t, level:r.level, hipW:m.img.hipW, wristH:m.img.wristH} : null;
 
+  // ---------- progression ----------
+  // Sessions save as plain records; the next session is planned from all of them (RT.planNext). Pure and deterministic.
+  // Record: {date, mode: 'train' | 'free', kind: 'baseline' | 'retest' | 'session', partial, minutes, work, rest, cap,
+  //   readWindow (mean reaction window faced, s), onTime (share of calls and reads made), rounds: [{phase, stancePct}],
+  //   stancePct, holdS, moves: {move: {n, hitRate, rtMed}}, trials: [{m, h, rt}], speed: {first, last}, explosive,
+  //   score: {you, opp}, fakesBit}
+  RT.PROG = {
+    moves:['sprawl', 'block', 'shot', 'snap', 'level', 'circle'],
+    // reaction windows (s): a weighted up-down staircase, every rep of a move moves its window. A hit shortens it 3%,
+    // a miss lengthens it 9%, which settles where you make about 74% (hit share p where p ln 0.97 + (1 - p) ln 1.09 = 0)
+    window0:1.25, wMin:0.45, wMax:2.0, hitStep:0.97, missStep:1.09, testWindow:1.6,
+    halfLifeDays:14, retestEvery:8, holdCap:180, breakS:2,
+    progressAt:0.80, last3At:0.75, backOffAt:0.60, deloadRatio:0.9, deloadEase:1.15,
+    workStep:15, restStep:5, restBack:10, workMin:30, workMax:120, restMin:30, restMax:75,
+    cap0:16, capStep:2, capMin:8, capMax:40, speedKeep:0.9, speedDrop:0.8, totalS:15*60,
+    // recent history: back after days off, several days in a row, a second session the same day, a long layoff
+    daysOffEase:4, layoffRetest:21, streakLight:3
+  };
+  // Mark's goal (10/27): 15 minutes at Hard pace, 2:00 rounds with 0:30 rest and the Hard preset's 0.95 s reads.
+  RT.GOAL = {minutes:15, work:120, rest:30, window:0.95};
+  // Levels, each a session you can complete: its length, stance held, the reaction window you faced, the share of
+  // calls you made, and your median sprawl reaction. The labels are estimates of where that pace sits (high school
+  // to NCAA), set by Mark's coaching sense and the research found so far; tagged match video will anchor them later.
+  RT.LEVELS = [
+    {name:'Novice'},
+    {name:'Beginner',        min:8,  stance:0.60, window:1.60, onTime:0.60},
+    {name:'HS JV',           min:12, stance:0.70, window:1.25, onTime:0.70, rt:0.80},
+    {name:'HS varsity',      min:15, stance:0.75, window:1.10, onTime:0.72, rt:0.70},
+    {name:'College D3',      min:15, stance:0.80, window:1.00, onTime:0.74, rt:0.60},
+    {name:'College D2',      min:15, stance:0.82, window:0.90, onTime:0.75, rt:0.55},
+    {name:'College D1',      min:15, stance:0.85, window:0.80, onTime:0.75, rt:0.50},
+    {name:'D1 qualifier',    min:20, stance:0.88, window:0.70, onTime:0.76, rt:0.45},
+    {name:'D1 All-American', min:20, stance:0.90, window:0.60, onTime:0.78, rt:0.40}
+  ];
+  const DAY = 86400000;
+  const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
+  const mean = a => a.length ? a.reduce((x, y) => x + y, 0)/a.length : null;
+  const fmtS = s => Math.floor(s/60) + ':' + String(Math.round(s%60)).padStart(2, '0');
+  const pct = v => Math.round(v*100) + '%';
+  RT.MOVE_NAMES = {sprawl:'sprawls', block:'down blocks', shot:'shots', snap:'snaps', level:'level changes', circle:'circling'};
+
+  RT.staircase = function(trials){
+    const P = RT.PROG, w = {};
+    for (const m of P.moves) w[m] = P.window0;
+    for (const t of trials || []) if (w[t.m] != null) w[t.m] = clampN(w[t.m]*(t.h ? P.hitStep : P.missStep), P.wMin, P.wMax);
+    return w;
+  };
+  // Average with recent points counting most: a point's weight halves every halfLifeDays.
+  RT.weightedAvg = function(points, now, halfLifeDays){
+    let sw = 0, sv = 0;
+    for (const p of points) { if (!num(p.v)) continue; const w = Math.pow(0.5, Math.max(0, now - p.t)/(halfLifeDays*DAY)); sw += w; sv += w*p.v; }
+    return sw ? sv/sw : null;
+  };
+  RT.moveStats = function(trials){
+    const out = {};
+    for (const m of RT.PROG.moves) {
+      const ts = (trials || []).filter(t => t.m === m);
+      out[m] = {n:ts.length, hitRate:ts.length ? ts.filter(t => t.h).length/ts.length : null, rtMed:RT.median(ts.filter(t => t.h && num(t.rt)).map(t => t.rt))};
+    }
+    return out;
+  };
+  // The move you read worst lately: lowest hit rate over its last 30 reps (at least 6), then the slowest.
+  RT.weakest = function(trials){
+    let worst = null;
+    for (const m of RT.PROG.moves) {
+      const ts = (trials || []).filter(t => t.m === m).slice(-30);
+      if (ts.length < 6) continue;
+      const hr = ts.filter(t => t.h).length/ts.length, rt = RT.median(ts.filter(t => t.h && num(t.rt)).map(t => t.rt)) || 9;
+      if (!worst || hr < worst.hr - 1e-9 || (Math.abs(hr - worst.hr) < 1e-9 && rt > worst.rt)) worst = {m, hr, rt};
+    }
+    return worst;
+  };
+  // Rounds that fill about totalS: a warm-in, technique, situations, then a live go.
+  RT.planRounds = function(work, rest, totalS){
+    totalS = totalS || RT.PROG.totalS;
+    const n = clampN(Math.floor((totalS + rest)/(work + rest)), 5, 18);
+    const live = n >= 8 ? 3 : 2, sit = n >= 12 ? 3 : n >= 7 ? 2 : 1, tech = Math.max(1, n - 1 - sit - live);
+    const r = [{phase:'warm', k:0, of:1}];
+    for (let i = 0; i < tech; i++) r.push({phase:'tech', k:i, of:tech});
+    for (let i = 0; i < sit; i++) r.push({phase:'sit', k:i, of:sit});
+    for (let p = 1; p <= live; p++) r.push({phase:'live', go:0, goCount:1, period:p, periods:live});
+    return r;
+  };
+  // The test: a stance hold, a reaction test on every move, then a two-minute live round.
+  RT.testPlan = function(kind, fast){
+    const P = RT.PROG, w = {};
+    for (const m of P.moves) w[m] = P.testWindow;
+    return {kind, work:120, rest:45, cap:P.capMax, windows:w, weak:null, deload:false,
+      rounds:[{phase:'hold', work:fast ? 20 : P.holdCap}, {phase:'react', work:fast ? 30 : 210}, {phase:'live', work:fast ? 30 : 120, go:0, goCount:1, period:1, periods:1}],
+      why:[kind === 'baseline' ? 'First session: a baseline test. A stance hold, a reaction test on every move, then a two-minute live round.'
+        : 'Retest: the stance hold and reaction test again, to compare with your last test.']};
+  };
+
+  // opts: {minutes (the session length you picked), fast (short test rounds for headless checks)}
+  RT.planNext = function(history, now, opts){
+    const P = RT.PROG, o = opts || {}, fast = !!o.fast, totalS = (o.minutes || 15)*60;
+    const done = (history || []).filter(s => !s.partial || (s.rounds || []).length >= 2).slice().sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+    const tests = done.filter(s => (s.kind === 'baseline' || s.kind === 'retest') && num(s.holdS));
+    if (!tests.length) return RT.testPlan('baseline', fast);
+    const lastTest = tests[tests.length - 1];
+    const sessions = done.filter(s => s.kind === 'session');
+    const lastAny = done[done.length - 1], daysOff = (now - Date.parse(lastAny.date))/DAY;
+    if (sessions.filter(s => Date.parse(s.date) > Date.parse(lastTest.date)).length >= P.retestEvery) return RT.testPlan('retest', fast);
+    if (daysOff >= P.layoffRetest) { const t = RT.testPlan('retest', fast); t.why.unshift(`${Math.floor(daysOff)} days since your last session: retest first.`); return t; }
+    const trials = done.flatMap(s => s.trials || []);
+    const windows = RT.staircase(trials), why = [];
+    const last = sessions[sessions.length - 1];
+    let work = last ? last.work : clampN(Math.round(0.6*lastTest.holdS/5)*5, P.workMin, P.workMax);
+    let rest = last ? last.rest : (lastTest.holdS < 90 ? 45 : 30);
+    let cap = last && num(last.cap) ? last.cap : P.cap0;
+    if (!last) why.push(`Your test: stance held ${Math.round(lastTest.holdS)} s, so rounds start at ${fmtS(work)} with ${fmtS(rest)} rest.`);
+
+    // stance: the trend over all sessions (recent ones count most), the last 3, and the last 4 weeks
+    const pts = done.filter(s => num(s.stancePct)).map(s => ({t:Date.parse(s.date), v:s.stancePct}));
+    const trend = RT.weightedAvg(pts, now, P.halfLifeDays);
+    const last3 = done.slice(-3).map(s => s.stancePct).filter(num);
+    const older = pts.slice(0, -3).filter(p => now - p.t <= 28*DAY).map(p => p.v);
+    let deload = false;
+    if (last && last3.length === 3 && older.length >= 3 && mean(last3) < P.deloadRatio*mean(older)) {
+      deload = true;
+      why.push(`Stance ${pct(mean(last3))} over your last 3 sessions against ${pct(mean(older))} before that: an easier session.`);
+    } else if (last && num(trend) && trend >= P.progressAt && last3.length && Math.min(...last3) >= P.last3At) {
+      if (work < P.workMax) { work += P.workStep; why.push(`Stance holding at ${pct(trend)}: rounds go up to ${fmtS(work)}.`); }
+      else if (rest > P.restMin) { rest -= P.restStep; why.push(`Stance holding at ${pct(trend)} in full rounds: rest down to ${fmtS(rest)}.`); }
+    } else if (last && num(trend) && trend < P.backOffAt) {
+      rest = Math.min(P.restMax, rest + P.restBack);
+      why.push(`Stance at ${pct(trend)}: more rest, ${fmtS(rest)}, same rounds.`);
+    } else if (last && num(trend)) why.push(`Stance at ${pct(trend)}: same rounds.`);
+
+    // explosive cap: up 2 at most once a week while your last-round shots and sprawls stay sharp, down 2 when they fade
+    if (last && last.speed && num(last.speed.first) && num(last.speed.last) && last.speed.first > 0) {
+      const r = last.speed.last/last.speed.first;
+      let since = last;
+      for (let i = sessions.length - 1; i >= 0 && sessions[i].cap === cap; i--) since = sessions[i];
+      if (r < P.speedDrop) { cap = Math.max(P.capMin, cap - P.capStep); why.push(`Last-round speed ${pct(r)} of your first: explosive cap down to ${cap}.`); }
+      else if (r >= P.speedKeep && now - Date.parse(since.date) >= 7*DAY && cap < P.capMax) { cap += P.capStep; why.push(`Shots and sprawls held their speed all week: explosive cap up to ${cap}.`); }
+    }
+    if (deload) { for (const m of P.moves) windows[m] = Math.min(P.wMax, windows[m]*P.deloadEase); cap = Math.max(P.capMin, Math.round(cap*0.7)); work = Math.max(P.workMin, work - P.workStep); }
+
+    // recent history: these change this session only, never the plan the next one builds on
+    const dayKey = t => new Date(t).toISOString().slice(0, 10);
+    const today = dayKey(now), days = new Set(done.map(s => dayKey(Date.parse(s.date))));
+    let streak = 0; for (let d = now - DAY; days.has(dayKey(d)); d -= DAY) streak++;
+    let session = {work, rest, cap, windows:Object.assign({}, windows)};
+    if (days.has(today)) {
+      session.cap = Math.round(cap*0.5); for (const m of P.moves) session.windows[m] = Math.min(P.wMax, windows[m]*1.1);
+      why.push('Second session today: half the explosive cap, easier reads.');
+    } else if (daysOff >= P.daysOffEase) {
+      session.work = Math.max(P.workMin, work - P.workStep); session.cap = Math.round(cap*0.8);
+      for (const m of P.moves) session.windows[m] = Math.min(P.wMax, windows[m]*1.1);
+      why.push(`Back after ${Math.floor(daysOff)} days: shorter rounds and easier reads this time.`);
+    } else if (streak + 1 >= P.streakLight) {
+      session.cap = Math.round(cap*0.75); session.rest = Math.min(P.restMax, rest + 5);
+      why.push(`Day ${streak + 1} in a row: lighter explosive work, a little more rest.`);
+    }
+
+    const weak = RT.weakest(trials);
+    if (weak) why.push(`More calls on ${RT.MOVE_NAMES[weak.m]}: ${pct(weak.hr)} on time lately.`);
+    // work, rest and cap are what the next plan builds on; session is what runs today
+    return {kind:'session', work, rest, cap, windows, weak:weak ? weak.m : null, deload, trend, minutes:totalS/60,
+      session, rounds:RT.planRounds(session.work, session.rest, totalS), goal:RT.goalProgress(work, rest, windows), why};
+  };
+
+  // How far today's plan is from the goal: each part 0 to 1.
+  RT.goalProgress = function(work, rest, windows){
+    const G = RT.GOAL, w = RT.PROG.moves.map(m => windows[m]), mw = w.reduce((a, b) => a + b, 0)/w.length;
+    return {work:Math.min(1, work/G.work), rest:Math.min(1, G.rest/rest), reads:Math.min(1, G.window/mw), readWindow:mw,
+      text:`Goal ${G.minutes} min at Hard pace: rounds ${fmtS(work)} of ${fmtS(G.work)}, rest ${fmtS(rest)} of ${fmtS(G.rest)}, reads ${mw.toFixed(2)} s of ${G.window.toFixed(2)} s.`};
+  };
+
+  // Your level: the highest one that 2 of your last 5 full sessions meet, and what the next one needs.
+  RT.levelOf = function(history){
+    const L = RT.LEVELS, recent = (history || []).filter(s => !s.partial && s.kind === 'session').slice(-5);
+    const meets = (s, lv) => (s.minutes || 0) >= lv.min && num(s.stancePct) && s.stancePct >= lv.stance && num(s.readWindow) && s.readWindow <= lv.window + 1e-9
+      && num(s.onTime) && s.onTime >= lv.onTime && (lv.rt == null || (s.moves && s.moves.sprawl && num(s.moves.sprawl.rtMed) && s.moves.sprawl.rtMed <= lv.rt));
+    let idx = 0;
+    for (let i = 1; i < L.length; i++) { if (recent.filter(s => meets(s, L[i])).length >= 2) idx = i; else break; }
+    const next = L[idx + 1];
+    let needs = [];
+    if (next) {
+      const best = k => recent.reduce((b, s) => (num(s[k]) && (b == null || (k === 'readWindow' ? s[k] < b : s[k] > b)) ? s[k] : b), null);
+      const bestRt = recent.reduce((b, s) => { const v = s.moves && s.moves.sprawl && s.moves.sprawl.rtMed; return num(v) && (b == null || v < b) ? v : b; }, null);
+      needs = [`${next.min} min sessions`, `stance ${pct(next.stance)}${best('stancePct') != null ? ' (best ' + pct(best('stancePct')) + ')' : ''}`,
+        `reads at ${next.window.toFixed(2)} s${best('readWindow') != null ? ' (yours ' + best('readWindow').toFixed(2) + ' s)' : ''}`,
+        `${pct(next.onTime)} on time${best('onTime') != null ? ' (best ' + pct(best('onTime')) + ')' : ''}`];
+      if (next.rt) needs.push(`sprawls in ${Math.round(next.rt*1000)} ms${bestRt != null ? ' (best ' + Math.round(bestRt*1000) + ')' : ''}`);
+      needs.push('in 2 of 5 sessions');
+    }
+    return {idx, name:L[idx].name, next:next ? next.name : null, needs};
+  };
+
+  // Best-ever numbers, from every saved session.
+  RT.records = function(history){
+    const s = (history || []).filter(x => !x.partial);
+    const best = {holdS:null, stancePct:null, rt:{}};
+    for (const x of s) {
+      if (num(x.holdS) && (best.holdS == null || x.holdS > best.holdS)) best.holdS = x.holdS;
+      if (num(x.stancePct) && (x.rounds || []).length >= 4 && (best.stancePct == null || x.stancePct > best.stancePct)) best.stancePct = x.stancePct;
+      for (const m of RT.PROG.moves) { const st = x.moves && x.moves[m]; if (st && st.n >= 4 && num(st.rtMed) && (best.rt[m] == null || st.rtMed < best.rt[m])) best.rt[m] = st.rtMed; }
+    }
+    return best;
+  };
+
+  // One row per session, for Numbers, Sheets or Excel.
+  RT.toCSV = function(history){
+    const moves = RT.PROG.moves;
+    const head = ['date', 'mode', 'kind', 'partial', 'rounds', 'work_s', 'rest_s', 'stance_pct', 'hold_s', 'explosive', 'cap', 'score_you', 'score_opp', 'fakes_bit', 'speed_first', 'speed_last'];
+    for (const m of moves) head.push(m + '_n', m + '_hit_pct', m + '_rt_ms');
+    const r2 = v => num(v) ? Math.round(v*100)/100 : '';
+    const rows = (history || []).map(s => {
+      const row = [s.date, s.mode, s.kind, s.partial ? 1 : 0, (s.rounds || []).length, s.work, s.rest, num(s.stancePct) ? Math.round(s.stancePct*100) : '',
+        r2(s.holdS), s.explosive, s.cap, s.score ? s.score.you : '', s.score ? s.score.opp : '', s.fakesBit || 0,
+        r2(s.speed && s.speed.first), r2(s.speed && s.speed.last)];
+      for (const m of moves) { const st = (s.moves || {})[m] || {}; row.push(st.n || 0, num(st.hitRate) ? Math.round(st.hitRate*100) : '', num(st.rtMed) ? Math.round(st.rtMed*1000) : ''); }
+      return row.map(v => v == null ? '' : String(v).replace(/[,\n]/g, ' ')).join(',');
+    });
+    return [head.join(',')].concat(rows).join('\n') + '\n';
+  };
+
   // Timestamps for detectForVideo must strictly increase.
   RT.nextTs = (last, now) => now > last ? now : last + 1;
 
