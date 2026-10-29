@@ -295,9 +295,6 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
           <div id="liveOut">Start the camera.</div></div>
         <div class="lcard"><h3>Calibration</h3><div id="calOut"></div>
           <div class="lbtns"><button id="calBtn">Calibrate</button><button id="calSave" hidden>Save</button></div></div>
-        <div class="lcard"><h3>Recording</h3><div id="recOut">Camera video plus a landmark trace, up to 5 minutes. Load video runs a saved clip through the same tracker and makes a trace from it.</div>
-          <div class="lbtns"><button id="recBtn">Record</button><button id="fileBtn">Load video</button><button id="recVideo" hidden>Save video</button><button id="recTrace" hidden>Save trace</button></div>
-          <input type="file" id="fileIn" accept="video/*" hidden></div>
         <div class="lcard"><h3>Model bench</h3><div id="benchOut"></div>
           <div class="lbtns"><button id="benchBtn">Bench models</button><button id="benchSave" hidden>Save</button></div></div>
         <div class="lcard"><h3>Thermal soak</h3><div id="soakOut"></div><canvas id="soakChart" style="width:100%;height:60px"></canvas>
@@ -1961,7 +1958,6 @@ function stopSource(){
   stopStream(L.stream); L.stream = null;
   try { video.pause(); } catch(e) {}
   video.srcObject = null;
-  if (L.fileUrl) { video.removeAttribute('src'); video.load(); URL.revokeObjectURL(L.fileUrl); L.fileUrl = null; }
   L.src = null; L.cur = null;
   $('labStop').disabled = true; $('labStart').textContent = 'Start camera';
   $('labHud').hidden = true; $('labHint').hidden = true;
@@ -1976,7 +1972,7 @@ function fillCams(cams, id){
 function statusLine(){
   if (!L.src) return 'Camera off';
   const c = L.cam;
-  const cam = L.src === 'file' ? 'video file' : `${c.label || 'camera'} ${c.width}x${c.height}` + (c.zoom != null ? ` zoom ${(+c.zoom).toFixed(2)}` + (c.zoomMin != null ? ` (min ${(+c.zoomMin).toFixed(2)})` : '') : ' no zoom control');
+  const cam = `${c.label || 'camera'} ${c.width}x${c.height}` + (c.zoom != null ? ` zoom ${(+c.zoom).toFixed(2)}` + (c.zoomMin != null ? ` (min ${(+c.zoomMin).toFixed(2)})` : '') : ' no zoom control');
   return `${cam} · ${L.model} ${L.delegate || ''}`;
 }
 
@@ -2103,7 +2099,7 @@ globalThis.RoomTimeLab = {L, RT, $, video, status, statusLine, say, beep, stats,
 })();
 </script>
 <script id="rt-lab-tools">
-// Camera check tools: model bench, thermal soak, calibration, live readouts, recording.
+// Camera check tools: model bench, thermal soak, calibration, live readouts. No video is recorded or kept anywhere.
 (() => {
 const {L, RT, $, video, status, statusLine, say, beep, stats, loadModel, want} = globalThis.RoomTimeLab;
 const now = () => performance.now();
@@ -2112,7 +2108,7 @@ const store = {
   get(k){ try { return JSON.parse(localStorage.getItem('roomtime.' + k) || 'null'); } catch(e) { return null; } },
   set(k, v){ try { localStorage.setItem('roomtime.' + k, JSON.stringify(v)); } catch(e) {} }
 };
-let busy = null; // the one tool running: 'bench' | 'soak' | 'cal' | 'record'
+let busy = null; // the one tool running: 'bench' | 'soak' | 'cal'
 const cancelled = {};
 // waits ms, in short steps so a tool can be stopped; resolves false if it was
 async function wait(ms, tool){
@@ -2121,7 +2117,6 @@ async function wait(ms, tool){
   return !cancelled[tool] && !!L.src;
 }
 function claim(tool){
-  if (busy === 'file' && L.src !== 'file') busy = null;
   if (!L.src) { status('Start the camera first'); return false; }
   if (busy && busy !== tool) { status('Finish the ' + busy + ' first'); return false; }
   busy = tool; cancelled[tool] = false; return true;
@@ -2537,112 +2532,6 @@ globalThis.RoomTimeGame.onQuit = () => { play.on = false; globalThis.RoomTimeLab
 $('camPlayBtn').addEventListener('click', startCamPlay);
 globalThis.RoomTimeLab.play = play;
 
-/* ---------- recording and video files ---------- */
-// Record: the camera video through MediaRecorder plus a landmark trace on the same clock (ms from the
-// recorder's start). Load video: a saved clip runs through the same detectForVideo loop a frame at a time
-// (seek, wait for the frame, detect) and exports the same trace, timed by the video's own clock.
-const REC_MAX_MS = 5*60*1000, FILE_STEP = 1/30;
-let rec = null, out = null; // out: the last {name, video, trace} ready to save
-
-function newTrace(source){
-  return {format:'room-time-trace', version:1,
-    meta:{source, at:new Date().toISOString(), model:L.model, delegate:L.delegate, device:device(), cal, src:hipSrc, aspect:null, w:null, h:null},
-    frames:[], labels:[]};
-}
-const sizeTrace = (tr, f) => { if (!tr.meta.w && f.w) Object.assign(tr.meta, {aspect:f.aspect, w:f.w, h:f.h}); };
-function pickMime(){
-  if (!window.MediaRecorder) return null;
-  for (const m of ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm']) if (MediaRecorder.isTypeSupported(m)) return m;
-  return '';
-}
-function showOut(){
-  $('recVideo').hidden = !(out && out.video); $('recTrace').hidden = !(out && out.trace);
-  if (out) $('recOut').textContent = `${out.name}: ${out.trace.frames.length} frames` + (out.video ? `, video ${n(out.video.size/1e6, 1)} MB` : '') + '. Save each below.';
-}
-
-function record(){
-  if (busy === 'record') { stopRecord(); return; }
-  if (L.src !== 'camera') { status('Recording needs the camera'); return; }
-  if (!claim('record')) return;
-  const mime = pickMime(), tr = newTrace('camera'), chunks = [];
-  let mr = null;
-  if (mime !== null) { try { mr = new MediaRecorder(L.stream, mime ? {mimeType:mime, videoBitsPerSecond:6e6} : undefined); } catch(e) { mr = null; } }
-  rec = {mr, chunks, tr, t0:null, mime:mr ? (mr.mimeType || mime) : null};
-  rec.fn = f => {
-    if (rec.t0 == null) return;
-    const t = Math.round(f.t - rec.t0);
-    rec.tr.frames.push({t, lm:f.lm, wl:f.wl}); sizeTrace(rec.tr, f);
-    if (t > REC_MAX_MS) stopRecord();
-  };
-  L.on.add(rec.fn);
-  rec.tick = setInterval(() => { if (rec && rec.t0 != null) status(`Recording ${n((now() - rec.t0)/1000)} s`); }, 500);
-  if (mr) {
-    mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-    mr.onstart = () => { rec.t0 = now(); };
-    mr.onstop = finishRecord;
-    mr.start(1000);
-  } else { rec.t0 = now(); status('No video recorder here; recording the trace only'); }
-  $('recBtn').textContent = 'Stop recording'; $('recBtn').classList.add('on');
-  out = null; showOut(); beep(660, 0.1);
-}
-function stopRecord(){
-  if (!rec || rec.stopping) return;
-  rec.stopping = true;
-  if (rec.mr && rec.mr.state !== 'inactive') rec.mr.stop(); else finishRecord();
-}
-function finishRecord(){
-  if (!rec) return;
-  L.on.delete(rec.fn); clearInterval(rec.tick);
-  const name = 'room-time-' + stamp();
-  out = {name, trace:rec.tr, video:rec.chunks.length ? new Blob(rec.chunks, {type:rec.mime || 'video/mp4'}) : null,
-    ext:/webm/.test(rec.mime || '') ? 'webm' : 'mp4'};
-  rec = null; beep(990, 0.12);
-  $('recBtn').textContent = 'Record'; $('recBtn').classList.remove('on');
-  release('record'); status(statusLine()); showOut();
-}
-
-let fileFn = null;
-function endFile(){ if (fileFn) L.on.delete(fileFn); fileFn = null; if (busy === 'file') busy = null; }
-async function loadVideoFile(file){
-  endFile();
-  if (busy) { status('Finish the ' + busy + ' first'); return; }
-  const {stopSource, begin} = globalThis.RoomTimeLab;
-  stopSource(); $('labEmpty').hidden = true;
-  try {
-    L.fileUrl = URL.createObjectURL(file);
-    video.srcObject = null; video.muted = true; video.src = L.fileUrl;
-    await new Promise((res, rej) => { video.onloadeddata = res; video.onerror = () => rej(new Error('this browser cannot play the file')); });
-    video.onloadeddata = video.onerror = null;
-    video.pause();
-    L.src = 'file'; L.mirror = false; L.cam = {label:file.name, width:video.videoWidth, height:video.videoHeight};
-    await loadModel(want.model);
-  } catch(e) { status('Video error: ' + e.message); stopSource(); return; }
-  busy = 'file';
-  const tr = newTrace('file'); tr.meta.file = file.name; tr.meta.stepMs = FILE_STEP*1000;
-  const dur = video.duration;
-  const fn = f => {
-    if (L.src !== 'file') { endFile(); return; }
-    tr.frames.push({t:Math.round(f.vt), lm:f.lm, wl:f.wl}); sizeTrace(tr, f);
-    status(`Video: ${n(100*f.vt/1000/dur)}%`);
-    const next = f.vt/1000 + FILE_STEP;
-    if (next < dur) video.currentTime = next;
-    else done();
-  };
-  const done = () => {
-    endFile();
-    out = {name:file.name.replace(/\.[^.]+$/, ''), trace:tr, video:null};
-    status(`Video done: ${tr.frames.length} frames`); showOut(); beep(990, 0.12);
-  };
-  fileFn = fn; L.on.add(fn);
-  begin(); // detects the first frame; each detection then seeks to the next
-}
-
-$('recBtn').addEventListener('click', record);
-$('fileBtn').addEventListener('click', () => $('fileIn').click());
-$('fileIn').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadVideoFile(f); });
-$('recVideo').addEventListener('click', () => out && out.video && saveFile(`${out.name}.${out.ext}`, out.video));
-$('recTrace').addEventListener('click', () => out && saveFile(`${out.name}.trace.json`, jsonBlob(out.trace)));
-L.closers.push(() => { stopRecord(); endFile(); });
 
 Object.assign(globalThis.RoomTimeLab, {store, saveFile, jsonBlob, stamp, device, wait, claim, release, cancelled});
 })();

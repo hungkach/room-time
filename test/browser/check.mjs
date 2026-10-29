@@ -1,7 +1,7 @@
 // Headless check of the camera check screen in Chromium with a fake camera (no person in it).
 // MediaPipe and the models come from $MP_DIR (see fetch-mediapipe.sh), so it runs offline from jsdelivr.
 // The real model loads and runs on the fake camera; then the landmarker is swapped for the synthetic
-// figure (test/helpers/figure.mjs), posed per spoken cue, to run calibration, readouts and recording.
+// figure (test/helpers/figure.mjs), posed per spoken cue, to run calibration, readouts and camera play.
 // Usage: MP_DIR=/some/dir node test/browser/check.mjs   (about two minutes; ?fast shortens bench and soak)
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -121,10 +121,8 @@ try {
   r = await live({ ...POSE['Square stance'], x: 1.0 }); check(Math.abs(r.floorX + 1) < 0.08, 'your left edge is floor -1: ' + r.floorX.toFixed(2));
   r = await live({ ...POSE['Square stance'], x: -0.6, dist: 1.6 }); check(Math.abs(r.X - 0.6) < 0.04 && Math.abs(r.z + 0.4) < 0.06, `0.6 m right and 0.4 m forward reads ${r.X.toFixed(2)} m and ${r.z.toFixed(2)} m`);
 
-  // recording
-  await page.click('#recBtn'); await page.waitForTimeout(2500); await page.click('#recBtn');
-  await page.waitForSelector('#recTrace:not([hidden])', { timeout: 15000 });
-  check(/frames/.test(await page.textContent('#recOut')), 'recording made a trace: ' + await page.textContent('#recOut'));
+  // no video recording anywhere (Mark, 10/27)
+  check(await page.evaluate(() => !document.querySelector('#recBtn, #fileIn') && !/MediaRecorder/.test(document.documentElement.innerHTML)), 'no video recording in the app');
 
   // the touch game still works, now in 3D
   await page.click('#labBack');
