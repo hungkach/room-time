@@ -7,6 +7,17 @@
 <title>Room Time</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"}}</script>
+<script>
+// Why the 3D view didn't start, if it doesn't: the first script error from three.js or the 3D module, or a script
+// that failed to load. The menu shows it (check3d).
+addEventListener('error', function (e) {
+  if (globalThis.RoomTime3DErr) return;
+  var t = e.target, f = e.filename || '';
+  if (t && t.tagName === 'SCRIPT') globalThis.RoomTime3DErr = 'could not load ' + (t.src || t.id || 'a script');
+  else if (/three|jsdelivr|index\.html|^$/.test(f) && e.message && !/ResizeObserver/.test(e.message))
+    globalThis.RoomTime3DErr = e.message + (f ? ' (' + f.split('/').pop() + ':' + e.lineno + ')' : '');
+}, true);
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
@@ -120,6 +131,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 
 /* camera check (Phase 0) */
 .actions.one{grid-template-columns:1fr}
+#menu.train .free-only{display:none}
 .plan .why{margin:0;padding-left:18px;font-size:.88rem;line-height:1.45;color:var(--muted)}
 #histBox summary{cursor:pointer;font-weight:600;font-size:.92rem}
 #histBox[open]{display:flex;flex-direction:column;gap:10px}
@@ -170,6 +182,13 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     </div>
 
     <div class="field">
+      <div class="lab">Mode</div>
+      <div class="seg c2" id="segTrain">
+        <button data-v="1">Train me<small>camera, planned for you</small></button>
+        <button data-v="0">Free play<small>touch or camera, your pace</small></button>
+      </div>
+    </div>
+    <div class="field">
       <div class="lab">Session length</div>
       <div class="seg c4" id="segLen">
         <button id="len15" data-v="15">15<small>min</small></button>
@@ -178,7 +197,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         <button id="len30" data-v="30">30<small>min</small></button>
       </div>
     </div>
-    <div class="field">
+    <div class="field free-only">
       <div class="lab">Pace</div>
       <div class="seg c3" id="segPace">
         <button id="paceS" data-v="steady">Steady<small>longer reads</small></button>
@@ -187,7 +206,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       </div>
     </div>
     <div class="field">
-      <div class="lab">Camera play</div>
+      <div class="lab">Camera</div>
       <div class="seg c2" id="segDevice">
         <button data-v="tablet">Tablet<small>iPad</small></button>
         <button data-v="phone">Phone<small>iPhone</small></button>
@@ -196,12 +215,8 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         <button data-v="front">Front camera<small>you see the screen</small></button>
         <button data-v="back">Back camera<small>widest view, by sound</small></button>
       </div>
-      <div class="seg c2" id="segTrain">
-        <button data-v="1">Train me<small>planned from your history</small></button>
-        <button data-v="0">Free play<small>length and pace above</small></button>
-      </div>
     </div>
-    <div class="field">
+    <div class="field free-only">
       <div class="lab">Preview</div>
       <div class="seg c2" id="segQuick">
         <button id="qOn" data-v="1">Quick look<small>30 s rounds, 8 s resets</small></button>
@@ -209,7 +224,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       </div>
     </div>
 
-    <div class="plan">
+    <div class="plan free-only">
       <div class="strip" id="strip"></div>
       <div class="sum" id="planSum"></div>
       <div class="legend">
@@ -220,15 +235,17 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       </div>
     </div>
 
-    <div class="actions">
+    <div class="actions free-only">
       <button class="primary" id="startBtn">Start session</button>
       <button class="secondary" id="autoBtn">Watch auto-play</button>
     </div>
     <div class="actions one"><button class="primary" id="camPlayBtn">Camera play</button><button class="secondary" id="labBtn" hidden>Camera check</button></div>
 
     <div class="plan" id="trainCard">
+      <div class="strip" id="trainStrip"></div>
       <div class="sum" id="trainSum"></div>
       <ul class="why" id="trainWhy"></ul>
+      <div class="sum" id="trainNums"></div>
       <div class="sum" id="trainLevel"></div>
       <details id="histBox">
         <summary>History and records</summary>
@@ -244,7 +261,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
       <div><b>Camera play:</b> prop the device sideways at hip height about 6 ft away (on an iPad, Center Stage off in Control Center). It calibrates you first: three holds, then shuffle to your left until it beeps or you reach your wall, pause, then all the way to your right and pause. After that, for two weeks on the same camera, it's a quick check: stand, then the shuffle. With the back camera the screen faces away, so it all runs by sound.</div>
-      <div><b>Train me:</b> the first camera session is a test: hold your stance as long as you can, then every move called at random, then a live round. Each session after is planned from every saved session (recent ones count most): round length and rest from your stance, a read window per move from every call, more calls on your weakest move, and lighter days when you go several days in a row or come back from time off. Sessions save on this device only (no video, only numbers); export them as a CSV from History.</div>
+      <div><b>Train me:</b> every session is planned fresh for the length you pick, from every saved session, recent ones counting most. It keeps three numbers on you: how long a round you can hold your stance through, how fast you read each move, and how many shots and sprawls you can do before they slow down. With this week's load against your usual, they set the day (technique, volume, pace or live), the rounds and the rest; then each round re-tunes the rounds after it. A second session the same day, a big week or time off makes for a lighter day. Sessions save on this device only (no video, only numbers); back them up or export a CSV from History.</div>
       <div><b>Block:</b> a down block, hands to his head and shoulders, hips back, feet planted. It stops a shot from range for little effort; a deep shot runs through it and needs the sprawl.</div>
       <div><b>Sprawl, shot, snap:</b> your big moves. Each round, the coach calls them and the drill partner shows the look.</div>
       <div><b>Live go reads:</b></div>
@@ -682,28 +699,46 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   // The detector's inputs from one frame's measures and readouts.
   RT.moveInput = (t, m, r) => m && r && num(r.level) ? {t, level:r.level, hipW:m.img.hipW, wristH:m.img.wristH} : null;
 
-  // ---------- progression ----------
-  // Sessions save as plain records; the next session is planned from all of them (RT.planNext). Pure and deterministic.
-  // Record: {date, mode: 'train' | 'free', kind: 'baseline' | 'retest' | 'session', partial, minutes, work, rest, cap,
-  //   readWindow (mean reaction window faced, s), onTime (share of calls and reads made), rounds: [{phase, stancePct}],
-  //   stancePct, holdS, moves: {move: {n, hitRate, rtMed}}, trials: [{m, h, rt}], speed: {first, last}, explosive,
-  //   score: {you, opp}, fakesBit}
+  // ---------- Train me: the adaptive plan ----------
+  // Every session is planned fresh from everything saved (RT.planNext), and every round re-tunes the next one in the
+  // game (RT.adaptRound). No fixed ladder and no test day. Pure and deterministic.
+  // Three running estimates of you, every observation weighted by how recent it is (half-life capHalfLife days),
+  // drifting back toward the starting values over a long layoff (layoffDays):
+  //   capacity: the work bout (s) you can keep in your stance about stanceAt of the time, from every round
+  //   reads: a window per move, from the live staircase (every drill call steps it)
+  //   explosive tolerance: shots and sprawls before their speed fades to speedFade of your first ones
+  // And fitness and fatigue as weekly training load: fatigue the last 7 days, fitness the last six weeks or so weighted
+  // e^(-days/fitDays). Their ratio (acute:chronic) sets the day: fresh under 1, a technique day over acwrMax, and no
+  // plan takes it over acwrCap.
+  // Record: {date, mode: 'train' | 'free', kind: 'session' | 'free' (older: 'baseline' | 'retest'), day, partial,
+  //   minutes, work, rest, cap, readWindow (mean window faced, s), onTime (share of calls and reads made),
+  //   rounds: [{phase, work (s worked), stancePct, breakT (s in when the stance first broke, or null), hold (s)}],
+  //   stancePct, holdS, moves: {move: {n, hitRate, rtMed}}, trials: [{m, h, rt, w}], speed: {first, last},
+  //   explosive, explosiveTol, load, score: {you, opp}, fakesBit}
   RT.PROG = {
     moves:['sprawl', 'block', 'shot', 'snap', 'level', 'circle'],
     // reaction windows (s): a weighted up-down staircase, every rep of a move moves its window. A hit shortens it 3%,
     // a miss lengthens it 9%, which settles where you make about 74% (hit share p where p ln 0.97 + (1 - p) ln 1.09 = 0)
-    window0:1.25, wMin:0.45, wMax:2.0, hitStep:0.97, missStep:1.09, testWindow:1.6,
-    halfLifeDays:14, retestDays:28, retestMin:6, holdCap:180, breakS:2,
-    // a step up (15 s more work, or 5 s less rest) needs stance held at progressAt, no session of the last 3 under
-    // last3At, and the plan settled at these rounds for stepSessions sessions over stepDays days: about one step a week
-    progressAt:0.75, last3At:0.70, stepSessions:3, stepDays:6, backOffAt:0.60, deloadRatio:0.9, deloadEase:1.15,
-    workStep:15, restStep:5, restBack:10, workMin:30, workMax:120, restMin:30, restMax:75,
-    cap0:16, capStep:2, capMin:8, capMax:40, speedKeep:0.9, speedDrop:0.8, totalS:15*60,
-    // recent history: back after days off, several days in a row, a second session the same day, a long layoff
-    daysOffEase:4, layoffRetest:21, streakLight:3
+    window0:1.25, wMin:0.45, wMax:2.0, hitStep:0.97, missStep:1.09,
+    // fitness and fatigue (weekly load, weighted e^(-days/42) and e^(-days/7)); usual0: the weekly load counted as
+    // usual before you've built one (about four plain sessions; trusted fully for trustDays); acwrMax: fatigue over fitness that makes it a technique day
+    fitDays:42, fatDays:7, usual0:40, trustDays:28, acwrMax:1.4, acwrCap:1.5, capHalfLife:21, layoffFrom:7, layoffDays:90, layoffMax:0.75,
+    stanceAt:0.75, cap0:30, capMin:20, capMax:150, capPrior:4, tol0:16, tolMin:6, tolMax:40, tolPrior:2, speedFade:0.8,
+    restMin:20, restMax:90, liveMax:120, holdEvery:28, holdAfter:4, holdCap:180, breakS:2, breakRoundS:3, totalS:15*60,
+    // load per minute of work by round type, and per shot or sprawl
+    loadK:{warm:0.5, tech:0.8, react:0.8, hold:1.0, sit:1.0, live:1.3}, repLoad:0.2
   };
   // Mark's goal (10/27): 15 minutes at Hard pace, 2:00 rounds with 0:30 rest and the Hard preset's 0.95 s reads.
-  RT.GOAL = {minutes:15, work:120, rest:30, window:0.95};
+  RT.GOAL = {minutes:15, work:120, rest:30, window:0.95, tol:40};
+  // Day types: what each trains, and how it shapes the rounds. work: of your capacity; rest: of the round's work;
+  // tol: of your explosive tolerance; ease: on your read windows; mix: share of technique, situations and live rounds.
+  RT.DAYS = {
+    start:     {name:'First session', work:1.0,  rest:1.5, tol:0.8,  ease:1.1,  mix:[0.5, 0.3, 0.2]},
+    technique: {name:'Technique day', work:0.8,  rest:1.6, tol:0.5,  ease:1.15, mix:[0.6, 0.3, 0.1], light:true},
+    volume:    {name:'Volume day',    work:1.1,  rest:1.0, tol:0.8,  ease:1.1,  mix:[0.4, 0.4, 0.2], trains:'stance'},
+    pace:      {name:'Pace day',      work:0.7,  rest:0.8, tol:1.1,  ease:0.97, mix:[0.3, 0.5, 0.2], trains:'reads'},
+    live:      {name:'Live day',      work:1.0,  rest:1.0, tol:1.3,  ease:1.0,  mix:[0.2, 0.3, 0.5], trains:'explosive'}
+  };
   // Levels, each a session you can complete: its length, stance held, the reaction window you faced, the share of
   // calls you made, and your median sprawl reaction. The labels are estimates of where that pace sits (high school
   // to NCAA), set by Mark's coaching sense and the research found so far; tagged match video will anchor them later.
@@ -745,7 +780,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   // Average with recent points counting most: a point's weight halves every halfLifeDays.
   RT.weightedAvg = function(points, now, halfLifeDays){
     let sw = 0, sv = 0;
-    for (const p of points) { if (!num(p.v)) continue; const w = Math.pow(0.5, Math.max(0, now - p.t)/(halfLifeDays*DAY)); sw += w; sv += w*p.v; }
+    for (const p of points) { if (!num(p.v)) continue; const w = (p.w == null ? 1 : p.w)*Math.pow(0.5, Math.max(0, now - p.t)/(halfLifeDays*DAY)); sw += w; sv += w*p.v; }
     return sw ? sv/sw : null;
   };
   RT.moveStats = function(trials){
@@ -767,112 +802,249 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     }
     return worst;
   };
-  // Rounds that fill about totalS: a warm-in, technique, situations, then a live go.
-  RT.planRounds = function(work, rest, totalS){
-    totalS = totalS || RT.PROG.totalS;
-    const n = clampN(Math.floor((totalS + rest)/(work + rest)), 5, 18);
-    const live = n >= 8 ? 3 : 2, sit = n >= 12 ? 3 : n >= 7 ? 2 : 1, tech = Math.max(1, n - 1 - sit - live);
-    const r = [{phase:'warm', k:0, of:1}];
-    for (let i = 0; i < tech; i++) r.push({phase:'tech', k:i, of:tech});
-    for (let i = 0; i < sit; i++) r.push({phase:'sit', k:i, of:sit});
-    for (let p = 1; p <= live; p++) r.push({phase:'live', go:0, goCount:1, period:p, periods:live});
+
+  // What one round says about your capacity: at stanceAt in stance the round was about right; better and you could
+  // go longer, worse and it was too long. Smooth, and bounded to a quarter either way per round. A stance hold
+  // (all out) says about 60% of it. Warm-ins say nothing.
+  RT.capacityObs = function(r){
+    const P = RT.PROG;
+    if (!r) return null;
+    if (r.phase === 'hold') return num(r.hold) && r.hold > 0 ? clampN(0.6*r.hold, P.capMin, P.capMax) : null;
+    if (r.phase === 'warm' || !num(r.work) || r.work < 10 || !num(r.stancePct)) return null;
+    let k = clampN(Math.pow(r.stancePct/P.stanceAt, 2), 0.6, 1.25);
+    // the stance broke early and stayed broken: no more than a little past that point
+    if (num(r.breakT) && r.breakT < r.work*0.8) k = Math.min(k, Math.max(0.6, 1.1*r.breakT/r.work));
+    return clampN(r.work*k, P.capMin, P.capMax);
+  };
+  // Shots and sprawls before the speed fades: the first rep whose last three run under speedFade of the first three.
+  // No fade: at least the reps done, a little more (only from 6 or more).
+  RT.explosiveTol = function(speeds){
+    const P = RT.PROG, v = (speeds || []).filter(num);
+    if (v.length < 6) return null;
+    const first = RT.median(v.slice(0, 3));
+    for (let i = 5; i < v.length; i++) if (RT.median(v.slice(i - 2, i + 1)) < P.speedFade*first) return clampN(i - 1, P.tolMin, P.tolMax);
+    return clampN(Math.round(v.length*1.15), P.tolMin, P.tolMax);
+  };
+  // true while the speed has not faded yet (the tolerance is at least the reps done)
+  RT.speedHolding = function(speeds){
+    const P = RT.PROG, v = (speeds || []).filter(num);
+    if (v.length < 6) return true;
+    const first = RT.median(v.slice(0, 3));
+    for (let i = 5; i < v.length; i++) if (RT.median(v.slice(i - 2, i + 1)) < P.speedFade*first) return false;
+    return true;
+  };
+  // A session's training load: minutes of work by round type, and the shots and sprawls.
+  RT.loadOf = function(s){
+    if (!s) return 0;
+    if (num(s.load)) return s.load;
+    const P = RT.PROG, rs = s.rounds || [];
+    let l = 0;
+    for (const r of rs) l += (num(r.work) ? r.work : num(s.work) ? s.work : 60)/60*(P.loadK[r.phase] || 1);
+    return l + (num(s.explosive) ? s.explosive : 0)*P.repLoad;
+  };
+  // The load a plan will be, for the fatigue check before it runs.
+  const planLoad = (rounds, cap) => rounds.reduce((a, r) => a + r.work/60*(RT.PROG.loadK[r.phase] || 1), 0) + cap*RT.PROG.repLoad;
+
+  // Where you are now, from every saved session. today: sessions already done today count fully.
+  RT.state = function(history, now){
+    const P = RT.PROG;
+    // every session counts, ended early or not: its rounds are real work
+    const done = (history || []).filter(s => s && s.date && (s.rounds || []).length && Date.parse(s.date) <= now)
+      .slice().sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+    const days = s => Math.max(0, (now - Date.parse(s.date))/DAY);
+    // weekly load: fatigue is the last 7 days' total (fat6, the last 6, is what today's session joins); fitness, your
+    // usual week, is the weekly load before that, weighted e^(-days/fitDays) (this week left out, so a big week can't
+    // make itself look usual; never under usual0)
+    let fat = 0, fat6 = 0, fit = 0;
+    for (const s of done) {
+      const L = RT.loadOf(s), d = days(s);
+      if (d < P.fatDays) fat += L; else fit += L*Math.exp(-(d - P.fatDays)/P.fitDays);
+      if (d < P.fatDays - 1) fat6 += L;
+    }
+    fit *= 7*(1 - Math.exp(-1/P.fitDays));
+    // a six-week average needs six weeks to fill: scale it up by how much of it your history covers, and lean on the
+    // starting usual over the first four weeks of it
+    const span = done.length ? (now - Date.parse(done[0].date))/DAY - P.fatDays : 0;
+    const filled = span > 0 ? fit/(1 - Math.exp(-span/P.fitDays)) : 0, trust = clampN(span/P.trustDays, 0, 1);
+    const fitEff = Math.max(P.usual0, trust*filled + (1 - trust)*P.usual0);
+    const last = done[done.length - 1], daysOff = last ? days(last) : null;
+    const layoff = last ? clampN((daysOff - P.layoffFrom)/P.layoffDays, 0, P.layoffMax) : 0;
+    // A running estimate: each reading in time order, older ones fading by half every capHalfLife days, the starting
+    // value always counting as `prior` readings. A reading that only says "at least this" (an easy round, or no fade
+    // in the explosive reps) counts only when it is above the estimate; under it, it says nothing new.
+    const running = (pts, v0, prior) => {
+      let sw = 0, sv = 0, tPrev = null;
+      const est = () => (sv + prior*v0)/(sw + prior);
+      for (const p of pts) {
+        if (tPrev != null && p.t > tPrev) { const f = Math.pow(0.5, (p.t - tPrev)/(P.capHalfLife*DAY)); sw *= f; sv *= f; }
+        tPrev = p.t; if (p.atLeast && p.v <= est()) continue; sw += 1; sv += p.v;
+      }
+      if (tPrev != null) { const f = Math.pow(0.5, Math.max(0, now - tPrev)/(P.capHalfLife*DAY)); sw *= f; sv *= f; }
+      const e = est();
+      return e + (v0 - e)*layoff;
+    };
+    const capPts = [];
+    for (const s of done) {
+      const t = Date.parse(s.date);
+      if ((s.kind === 'baseline' || s.kind === 'retest') && num(s.holdS)) { capPts.push({t, v:clampN(0.6*s.holdS, P.capMin, P.capMax)}); continue; }
+      const rs = (s.rounds || []).filter(r => num(r.work) || r.phase === 'hold');
+      const legacy = !rs.length && num(s.work) && num(s.stancePct) ? [{phase:'tech', work:s.work, stancePct:s.stancePct}] : [];
+      for (const r of rs.concat(legacy)) {
+        const v = RT.capacityObs(r);
+        if (v != null) capPts.push({t, v, atLeast:r.phase !== 'hold' && Math.pow(r.stancePct/P.stanceAt, 2) >= 1.25});
+      }
+    }
+    const cap = running(capPts, P.cap0, P.capPrior);
+    const tol = running(done.filter(s => num(s.explosiveTol)).map(s => ({t:Date.parse(s.date), v:s.explosiveTol, atLeast:!!s.tolOpen})), P.tol0, P.tolPrior);
+    // reads: the staircase over every call, then the layoff drift
+    const trials = done.flatMap(s => s.trials || []);
+    const windows = RT.staircase(trials);
+    for (const m of P.moves) windows[m] = windows[m] + (P.window0 - windows[m])*layoff;
+    const today = new Date(now).toISOString().slice(0, 10);
+    const todays = done.filter(s => s.date.slice(0, 10) === today);
+    const week = done.filter(s => days(s) < 7).length;
+    // fresh (up to 1) when this week's load is under your usual, tired (down to -1) when it's half again over it
+    const acwr = fat/fitEff, ready = clampN((1 - acwr)/0.5, -1, 1);
+    const lastHold = done.filter(s => (s.rounds || []).some(r => r.phase === 'hold') || num(s.holdS)).pop();
+    // sessions since each day type was last done
+    const since = {};
+    for (const d of Object.keys(RT.DAYS)) { const i = done.map(x => x.day).lastIndexOf(d); since[d] = i < 0 ? done.length : done.length - 1 - i; }
+    return {n:done.length, last, daysOff, since, fit:fitEff, fat, fat6, acwr, ready, cap, tol, windows, trials, week, todayN:todays.length,
+      todayLoad:todays.reduce((a, s) => a + RT.loadOf(s), 0), lastDay:last && last.day, prevDay:done.length > 1 ? done[done.length - 2].day : null,
+      holdAgo:lastHold ? days(lastHold) : null};
+  };
+
+  // How far each quality is from the goal, 0 to 1.
+  RT.qualities = function(st){
+    const P = RT.PROG, G = RT.GOAL, w = P.moves.map(m => st.windows[m]), mw = w.reduce((a, b) => a + b, 0)/w.length;
+    return {stance:Math.min(1, st.cap/G.work), reads:Math.min(1, G.window/mw), explosive:Math.min(1, st.tol/G.tol), readWindow:mw};
+  };
+
+  // Rounds that fill the minutes: the warm-in, then technique, situations and live by the day's mix; each round
+  // carries its own work and the rest before it.
+  RT.buildRounds = function(day, work, rest, totalS, liveWork){
+    const D = RT.DAYS[day], P = RT.PROG;
+    const warmW = Math.min(work, 45);
+    const make = n => {
+      const live = Math.max(1, Math.round(n*D.mix[2])), sit = Math.max(1, Math.round(n*D.mix[1])), tech = Math.max(1, n - live - sit);
+      const r = [{phase:'warm', k:0, of:1, work:warmW, rest:0}];
+      for (let i = 0; i < tech; i++) r.push({phase:'tech', k:i, of:tech, work, rest});
+      for (let i = 0; i < sit; i++) r.push({phase:'sit', k:i, of:sit, work, rest});
+      // live goes of up to three periods, a shorter break between periods
+      const goes = Math.ceil(live/3);
+      for (let g = 0, k = 0; g < goes; g++) {
+        const periods = Math.min(3, live - k);
+        for (let p = 1; p <= periods; p++, k++) r.push({phase:'live', go:g, goCount:goes, period:p, periods, work:liveWork, rest:p === 1 ? rest : Math.min(rest, 30)});
+      }
+      // fill the minutes exactly: the leftover goes into the rests
+      const used = r.reduce((a, x) => a + x.work + x.rest, 0), extra = totalS - used, gaps = r.length - 1;
+      for (let i = 1; i < r.length; i++) r[i].rest = Math.round(clampN(r[i].rest + extra/gaps, P.restMin*0.75, P.restMax*1.5));
+      return r;
+    };
+    const total = r => r.reduce((a, x) => a + x.work + x.rest, 0);
+    let n = Math.max(2, Math.round((totalS - warmW + rest)/(work + rest))), r = make(n);
+    while (n > 2 && total(r) > totalS + 15) r = make(--n);
+    while (total(r) < totalS - (work + rest)) { const t = make(n + 1); if (total(t) > totalS + 15) break; r = t; n++; }
     return r;
   };
-  // The test: a stance hold, a reaction test on every move, then a two-minute live round.
-  RT.testPlan = function(kind, fast){
-    const P = RT.PROG, w = {};
-    for (const m of P.moves) w[m] = P.testWindow;
-    return {kind, work:120, rest:45, cap:P.capMax, windows:w, weak:null, deload:false,
-      rounds:[{phase:'hold', work:fast ? 20 : P.holdCap}, {phase:'react', work:fast ? 30 : 210}, {phase:'live', work:fast ? 30 : 120, go:0, goCount:1, period:1, periods:1}],
-      why:[kind === 'baseline' ? 'First session: a baseline test. A stance hold, a reaction test on every move, then a two-minute live round.'
-        : 'Retest: the stance hold and reaction test again, to compare with your last test.']};
-  };
 
-  // opts: {minutes (the session length you picked), fast (short test rounds for headless checks)}
+  // Today's session. opts: {minutes (what you picked)}
   RT.planNext = function(history, now, opts){
-    const P = RT.PROG, o = opts || {}, fast = !!o.fast, totalS = (o.minutes || 15)*60;
-    const done = (history || []).filter(s => !s.partial || (s.rounds || []).length >= 2).slice().sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
-    const tests = done.filter(s => (s.kind === 'baseline' || s.kind === 'retest') && num(s.holdS));
-    if (!tests.length) return RT.testPlan('baseline', fast);
-    const lastTest = tests[tests.length - 1];
-    const sessions = done.filter(s => s.kind === 'session');
-    const lastAny = done[done.length - 1], daysOff = (now - Date.parse(lastAny.date))/DAY;
-    if (sessions.filter(s => Date.parse(s.date) > Date.parse(lastTest.date)).length >= P.retestMin && now - Date.parse(lastTest.date) >= P.retestDays*DAY) return RT.testPlan('retest', fast);
-    if (daysOff >= P.layoffRetest) { const t = RT.testPlan('retest', fast); t.why.unshift(`${Math.floor(daysOff)} days since your last session: retest first.`); return t; }
-    const trials = done.flatMap(s => s.trials || []);
-    const windows = RT.staircase(trials), why = [];
-    const last = sessions[sessions.length - 1];
-    let work = last ? last.work : clampN(Math.round(0.6*lastTest.holdS/5)*5, P.workMin, P.workMax);
-    let rest = last ? last.rest : (lastTest.holdS < 90 ? 45 : 30);
-    let cap = last && num(last.cap) ? last.cap : P.cap0;
-    if (!last) why.push(`Your test: stance held ${Math.round(lastTest.holdS)} s, so rounds start at ${fmtS(work)} with ${fmtS(rest)} rest.`);
-
-    // stance: the trend over every training session (recent ones count most; tests are their own thing), the last 3,
-    // and the last 4 weeks
-    const train = done.filter(s => s.kind === 'session' || s.kind === 'free');
-    const pts = train.filter(s => num(s.stancePct)).map(s => ({t:Date.parse(s.date), v:s.stancePct}));
-    const trend = RT.weightedAvg(pts, now, P.halfLifeDays);
-    const last3 = train.slice(-3).map(s => s.stancePct).filter(num);
-    // how long the plan has sat at these rounds
-    let steady = 0, since = last;
-    for (let i = sessions.length - 1; i >= 0 && sessions[i].work === work && sessions[i].rest === rest; i--) { steady++; since = sessions[i]; }
-    const settled = !!last && steady >= P.stepSessions && now - Date.parse(since.date) >= P.stepDays*DAY;
-    const older = pts.slice(0, -3).filter(p => now - p.t <= 28*DAY).map(p => p.v);
-    let deload = false;
-    // (the middle of the last 3, so one bad day is not a trend)
-    if (last && last3.length === 3 && older.length >= 3 && RT.median(last3) < P.deloadRatio*mean(older)) {
-      deload = true;
-      why.push(`Stance ${pct(RT.median(last3))} over your last 3 sessions against ${pct(mean(older))} before that: an easier session.`);
-    } else if (last && num(trend) && trend >= P.progressAt && last3.length && Math.min(...last3) >= P.last3At && (work < P.workMax || rest > P.restMin)) {
-      if (!settled) {
-        const left = Math.max(P.stepSessions - steady, 0), days = Math.max(0, Math.ceil(P.stepDays - (now - Date.parse(since.date))/DAY));
-        why.push(`Stance at ${pct(trend)}: same rounds; the next step comes after ${left > 0 ? left + ' more session' + (left > 1 ? 's' : '') : ''}${left > 0 && days > 0 ? ' and ' : ''}${days > 0 ? days + ' more day' + (days > 1 ? 's' : '') : ''} like this.`);
-      } else if (work < P.workMax) { work += P.workStep; why.push(`Stance held at ${pct(trend)} over ${steady} sessions: rounds go up to ${fmtS(work)}.`); }
-      else { rest -= P.restStep; why.push(`Stance held at ${pct(trend)} in full rounds: rest down to ${fmtS(rest)}.`); }
-    } else if (last && num(trend) && trend < P.backOffAt) {
-      rest = Math.min(P.restMax, rest + P.restBack);
-      why.push(`Stance at ${pct(trend)}: more rest, ${fmtS(rest)}, same rounds.`);
-    } else if (last && num(trend)) why.push(`Stance at ${pct(trend)}: same rounds.`);
-
-    // explosive cap: up 2 at most once a week while your last-round shots and sprawls stay sharp, down 2 when they fade
-    if (last && last.speed && num(last.speed.first) && num(last.speed.last) && last.speed.first > 0) {
-      const r = last.speed.last/last.speed.first;
-      let since = last;
-      for (let i = sessions.length - 1; i >= 0 && sessions[i].cap === cap; i--) since = sessions[i];
-      if (r < P.speedDrop) { cap = Math.max(P.capMin, cap - P.capStep); why.push(`Last-round speed ${pct(r)} of your first: explosive cap down to ${cap}.`); }
-      else if (r >= P.speedKeep && now - Date.parse(since.date) >= 7*DAY && cap < P.capMax) { cap += P.capStep; why.push(`Shots and sprawls held their speed all week: explosive cap up to ${cap}.`); }
+    const P = RT.PROG, o = opts || {}, minutes = o.minutes || 15, totalS = minutes*60;
+    const st = RT.state(history, now), q = RT.qualities(st), why = [];
+    // the day type
+    let day;
+    if (!st.n) { day = 'start'; why.push('First session: rounds start short and every round tunes the next one.'); }
+    else if (st.todayN) { day = 'technique'; why.push(`Session ${st.todayN + 1} today: technique day, built around what you already did.`); }
+    else if (st.acwr > P.acwrMax) { day = 'technique'; why.push(`This week's load is ${st.acwr.toFixed(1)} times your usual (${st.week} sessions in 7 days): technique day.`); }
+    else if (st.daysOff >= 5) { day = 'technique'; why.push(`Back after ${Math.floor(st.daysOff)} days: technique day to start back.`); }
+    else {
+      // the quality furthest from the goal, not the same day twice in a row, and every type now and then
+      const score = d => {
+        const t = RT.DAYS[d].trains, gap = 1 - q[t];
+        return gap - (st.lastDay === d ? 0.25 : 0) - (st.prevDay === d ? 0.1 : 0) + Math.min(0.6, 0.08*st.since[d]);
+      };
+      day = ['volume', 'pace', 'live'].reduce((a, b) => score(b) > score(a) + 1e-9 ? b : a);
+      const t = RT.DAYS[day].trains;
+      why.push(`${RT.DAYS[day].name}: ${t === 'stance' ? `stance capacity ${fmtS(st.cap)} of the ${fmtS(RT.GOAL.work)} goal`
+        : t === 'reads' ? `reads at ${q.readWindow.toFixed(2)} s against the ${RT.GOAL.window.toFixed(2)} s goal`
+        : `explosive tolerance ${Math.round(st.tol)} of ${RT.GOAL.tol} reps`}.`);
     }
-    if (deload) { for (const m of P.moves) windows[m] = Math.min(P.wMax, windows[m]*P.deloadEase); cap = Math.max(P.capMin, Math.round(cap*0.7)); work = Math.max(P.workMin, work - P.workStep); }
-
-    // recent history: these change this session only, never the plan the next one builds on
-    const dayKey = t => new Date(t).toISOString().slice(0, 10);
-    const today = dayKey(now), days = new Set(done.map(s => dayKey(Date.parse(s.date))));
-    let streak = 0; for (let d = now - DAY; days.has(dayKey(d)); d -= DAY) streak++;
-    let session = {work, rest, cap, windows:Object.assign({}, windows), ease:1};
-    if (days.has(today)) {
-      session.cap = Math.round(cap*0.5); session.ease = 1.1; for (const m of P.moves) session.windows[m] = Math.min(P.wMax, windows[m]*1.1);
-      why.push('Second session today: half the explosive cap, easier reads.');
-    } else if (daysOff >= P.daysOffEase) {
-      session.work = Math.max(P.workMin, work - P.workStep); session.cap = Math.round(cap*0.8); session.ease = 1.1;
-      for (const m of P.moves) session.windows[m] = Math.min(P.wMax, windows[m]*1.1);
-      why.push(`Back after ${Math.floor(daysOff)} days: shorter rounds and easier reads this time.`);
-    } else if (streak + 1 >= P.streakLight) {
-      session.cap = Math.round(cap*0.75); session.rest = Math.min(P.restMax, rest + 5);
-      why.push(`Day ${streak + 1} in a row: lighter explosive work, a little more rest.`);
+    const D = RT.DAYS[day], r = clampN(st.ready, -1, 1);
+    // rounds: your capacity shaped by the day and how fresh you are; rest by the day, more when tired, and a little
+    // more in a long session so it can't turn into double the load
+    const longK = minutes > 20 ? 1 + 0.15*Math.min(1, (minutes - 20)/10) : 1;
+    let work = Math.round(clampN(st.cap*D.work*(1 + 0.1*r), P.capMin, P.capMax)/5)*5;
+    let rest = Math.round(clampN(work*D.rest*(1 - 0.2*r)*longK, P.restMin, P.restMax)/5)*5;
+    let cap = Math.round(clampN(st.tol*D.tol*(1 + 0.2*r)*Math.sqrt(minutes/15), P.tolMin, P.tolMax));
+    let ease = D.ease*(st.todayN ? 1.1 : 1);
+    if (st.todayN) cap = Math.max(P.tolMin, Math.round(cap*0.6));
+    if (st.n && st.daysOff != null && st.daysOff >= 14) why.push(`${Math.floor(st.daysOff)} days off: your numbers have drifted back toward the start.`);
+    // a stance-hold check in a normal session about every 4 weeks (from the 4th session), in place of a technique
+    // round; the rest of the session gives back its extra time
+    let holdW = st.n >= P.holdAfter && !st.todayN && (st.holdAgo == null || st.holdAgo >= P.holdEvery) && day !== 'technique'
+      ? Math.min(P.holdCap, Math.round(st.cap*2.5)) : 0;
+    const build = () => {
+      const r = RT.buildRounds(day, work, rest, totalS - (holdW ? holdW - work : 0), Math.min(work, P.liveMax));
+      const i = holdW ? r.findIndex(x => x.phase === 'tech') : -1;
+      if (i > 0) r[i] = {phase:'hold', work:holdW, rest:r[i].rest};
+      return r;
+    };
+    let rounds = build();
+    if (holdW) why.push('A stance hold in round ' + (rounds.findIndex(x => x.phase === 'hold') + 1) + ': how long you can hold it all out.');
+    // the fatigue check: today's load must keep the acute:chronic ratio in range (a technique day is already the
+    // light option, so it runs as planned)
+    if (day !== 'technique') {
+      const ratio = L => (st.fat6 + L)/st.fit;
+      // longer rests first (fewer rounds in the same minutes), then fewer explosive reps, then shorter rounds
+      for (let i = 0; i < 6 && ratio(planLoad(rounds, cap)) > P.acwrCap; i++) {
+        if (rest < P.restMax) rest = Math.min(P.restMax, Math.round(rest*1.25/5)*5);
+        else if (cap > P.tolMin*1.5) cap = Math.max(P.tolMin, Math.round(cap*0.8));
+        else work = Math.max(P.capMin, Math.round(work*0.85/5)*5);
+        rounds = build();
+        if (i === 0) why.push(`Kept under ${P.acwrCap} times your usual weekly load: longer rests.`);
+      }
+      if (ratio(planLoad(rounds, cap)) > P.acwrCap) {
+        day = 'technique'; holdW = 0; const T = RT.DAYS.technique; ease = T.ease;
+        work = Math.round(clampN(st.cap*T.work, P.capMin, P.capMax)/5)*5;
+        rest = Math.round(clampN(work*T.rest*longK, P.restMin, P.restMax)/5)*5;
+        cap = Math.max(P.tolMin, Math.round(st.tol*T.tol));
+        rounds = build(); why.splice(0, why.length, `This week's load is already near ${P.acwrCap} times your usual: technique day.`);
+      }
     }
-
-    const weak = RT.weakest(trials);
+    const windows = {};
+    for (const m of P.moves) windows[m] = clampN(st.windows[m]*ease, P.wMin, P.wMax);
+    const weak = RT.weakest(st.trials);
     if (weak) why.push(`More calls on ${RT.MOVE_NAMES[weak.m]}: ${pct(weak.hr)} on time lately.`);
-    // work, rest and cap are what the next plan builds on; session is what runs today
-    return {kind:'session', work, rest, cap, windows, weak:weak ? weak.m : null, deload, trend, minutes:totalS/60,
-      session, rounds:RT.planRounds(session.work, session.rest, totalS), goal:RT.goalProgress(work, rest, windows), why};
+    const session = {work, rest, cap, windows, ease};
+    return {kind:'session', day, dayName:RT.DAYS[day].name, minutes, work, rest, cap, windows, ease, weak:weak ? weak.m : null, state:st,
+      session, rounds, goal:RT.goalProgress(st, q), why};
   };
 
-  // How far today's plan is from the goal: each part 0 to 1.
-  RT.goalProgress = function(work, rest, windows){
-    const G = RT.GOAL, w = RT.PROG.moves.map(m => windows[m]), mw = w.reduce((a, b) => a + b, 0)/w.length;
-    return {work:Math.min(1, work/G.work), rest:Math.min(1, G.rest/rest), reads:Math.min(1, G.window/mw), readWindow:mw,
-      text:`Goal ${G.minutes} min at Hard pace: rounds ${fmtS(work)} of ${fmtS(G.work)}, rest ${fmtS(rest)} of ${fmtS(G.rest)}, reads ${mw.toFixed(2)} s of ${G.window.toFixed(2)} s.`};
+  // How far you are from the goal: each part 0 to 1, and a plain line.
+  RT.goalProgress = function(st, q){
+    const G = RT.GOAL;
+    q = q || RT.qualities(st);
+    return {stance:q.stance, reads:q.reads, explosive:q.explosive, readWindow:q.readWindow,
+      text:`Goal ${G.minutes} min at Hard pace: stance capacity ${fmtS(st.cap)} of ${fmtS(G.work)}, reads ${q.readWindow.toFixed(2)} s of ${G.window.toFixed(2)} s, explosive ${Math.round(st.tol)} of ${G.tol} reps.`};
+  };
+
+  // Mid-session: what the round just done says, applied to the rounds still to come. Each round keeps its work plus
+  // the rest before it, so the session still ends on time: shorter work gets longer rest, and the other way.
+  // On a light day (technique) rounds only ever shorten.
+  RT.adaptRound = function(r, upcoming, day){
+    const P = RT.PROG, obs = RT.capacityObs(r);
+    if (obs == null || !num(r.work) || r.work <= 0) return {k:1, rounds:upcoming};
+    const k = clampN(obs/r.work, 0.85, day && RT.DAYS[day] && RT.DAYS[day].light ? 1 : 1.1);
+    const out = upcoming.map(x => {
+      if (x.phase === 'warm' || x.phase === 'hold') return x;
+      const restMin = x.phase === 'live' && x.period > 1 ? 15 : P.restMin;
+      // longer work comes out of the rest, never below restMin
+      const max = Math.min(x.phase === 'live' ? P.liveMax : P.capMax, x.work + Math.max(0, x.rest - restMin));
+      const w = Math.min(max, Math.round(clampN(x.work*k, P.capMin, max)/5)*5);
+      return Object.assign({}, x, {work:w, rest:x.rest + x.work - w});
+    });
+    return {k, rounds:out};
   };
 
   // Your level: the highest one that 2 of your last 5 full sessions meet, and what the next one needs.
@@ -896,12 +1068,15 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     return {idx, name:L[idx].name, next:next ? next.name : null, needs};
   };
 
+  // a session's stance hold: older tests kept it on the session, now it's a round
+  const holdOf = s => num(s.holdS) ? s.holdS : ((s.rounds || []).find(r => r.phase === 'hold' && num(r.hold)) || {}).hold;
   // Best-ever numbers, from every saved session.
   RT.records = function(history){
     const s = (history || []).filter(x => !x.partial);
     const best = {holdS:null, stancePct:null, rt:{}};
     for (const x of s) {
-      if (num(x.holdS) && (best.holdS == null || x.holdS > best.holdS)) best.holdS = x.holdS;
+      const hs = holdOf(x);
+      if (num(hs) && (best.holdS == null || hs > best.holdS)) best.holdS = hs;
       if (num(x.stancePct) && (x.rounds || []).length >= 4 && (best.stancePct == null || x.stancePct > best.stancePct)) best.stancePct = x.stancePct;
       for (const m of RT.PROG.moves) { const st = x.moves && x.moves[m]; if (st && st.n >= 4 && num(st.rtMed) && (best.rt[m] == null || st.rtMed < best.rt[m])) best.rt[m] = st.rtMed; }
     }
@@ -926,12 +1101,12 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 
   RT.toCSV = function(history){
     const moves = RT.PROG.moves;
-    const head = ['date', 'mode', 'kind', 'partial', 'rounds', 'work_s', 'rest_s', 'stance_pct', 'hold_s', 'explosive', 'cap', 'score_you', 'score_opp', 'fakes_bit', 'speed_first', 'speed_last'];
+    const head = ['date', 'mode', 'kind', 'day', 'load', 'partial', 'rounds', 'work_s', 'rest_s', 'stance_pct', 'hold_s', 'explosive', 'cap', 'score_you', 'score_opp', 'fakes_bit', 'speed_first', 'speed_last'];
     for (const m of moves) head.push(m + '_n', m + '_hit_pct', m + '_rt_ms');
     const r2 = v => num(v) ? Math.round(v*100)/100 : '';
     const rows = (history || []).map(s => {
-      const row = [s.date, s.mode, s.kind, s.partial ? 1 : 0, (s.rounds || []).length, s.work, s.rest, num(s.stancePct) ? Math.round(s.stancePct*100) : '',
-        r2(s.holdS), s.explosive, s.cap, s.score ? s.score.you : '', s.score ? s.score.opp : '', s.fakesBit || 0,
+      const row = [s.date, s.mode, s.kind, s.day || '', r2(RT.loadOf(s)), s.partial ? 1 : 0, (s.rounds || []).length, s.work, s.rest, num(s.stancePct) ? Math.round(s.stancePct*100) : '',
+        r2(holdOf(s)), s.explosive, s.cap, s.score ? s.score.you : '', s.score ? s.score.opp : '', s.fakesBit || 0,
         r2(s.speed && s.speed.first), r2(s.speed && s.speed.last)];
       for (const m of moves) { const st = (s.moves || {})[m] || {}; row.push(st.n || 0, num(st.hitRate) ? Math.round(st.hitRate*100) : '', num(st.rtMed) ? Math.round(st.rtMed*1000) : ''); }
       return row.map(v => v == null ? '' : String(v).replace(/[,\n]/g, ' ')).join(',');
@@ -1029,6 +1204,8 @@ function renderMenu(){
       b.setAttribute('aria-pressed', String(settings[key] === v));
     });
   });
+  $('menu').classList.toggle('train', !!settings.train);
+  $('camPlayBtn').textContent = settings.train ? 'Train me' : 'Camera play';
   const plan = buildPlan(settings.len);
   $('strip').innerHTML = plan.map(r => `<i style="background:var(--${PHASE[r.phase].c})"></i>`).join('');
   const L = LAYOUT[settings.len];
@@ -1047,15 +1224,18 @@ function renderTrain(){
   const esc = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]);
   const sec = v => v >= 60 ? `${Math.floor(v/60)}:${String(Math.round(v%60)).padStart(2, '0')}` : `${Math.round(v)} s`;
   if (settings.train) {
-    const p = RT.planNext(h, Date.now(), {minutes:settings.len}), t = p.session || p;
-    const n = p.rounds.length;
-    $('trainSum').innerHTML = p.kind === 'session'
-      ? `<b>Next camera session</b> · ${n} rounds of ${sec(t.work)}, ${sec(t.rest)} rest, explosive cap ${t.cap}, read windows ${Math.min(...RT.PROG.moves.map(m => t.windows[m])).toFixed(2)} to ${Math.max(...RT.PROG.moves.map(m => t.windows[m])).toFixed(2)} s.`
-      : `<b>Next camera session: ${p.kind === 'baseline' ? 'baseline test' : 'retest'}</b> · about ${Math.round(p.rounds.reduce((a, r) => a + r.work, 0)/60 + 1.5)} min.`;
-    $('trainWhy').innerHTML = p.why.concat(p.goal ? [p.goal.text] : []).map(w => `<li>${esc(w)}</li>`).join('');
+    const p = RT.planNext(h, Date.now(), {minutes:settings.len}), st = p.state, q = RT.qualities(st);
+    const ws = RT.PROG.moves.map(m => p.windows[m]);
+    $('trainStrip').innerHTML = p.rounds.map(r => `<i style="background:var(--${PHASE[r.phase].c});flex:${r.work}"></i>`).join('');
+    $('trainSum').innerHTML = `<b>Today: ${esc(p.dayName)}</b> · ${p.rounds.length} rounds in ${settings.len} min, ${sec(p.work)} work, ${sec(p.rest)} rest, `
+      + `explosive cap ${p.cap}, read windows ${Math.min(...ws).toFixed(2)} to ${Math.max(...ws).toFixed(2)} s. Each round re-tunes the next.`;
+    $('trainWhy').innerHTML = p.why.map(w => `<li>${esc(w)}</li>`).join('');
+    $('trainNums').innerHTML = !h.length ? '' : `<b>Your numbers</b> · stance capacity ${sec(st.cap)} (goal ${sec(RT.GOAL.work)}), reads ${q.readWindow.toFixed(2)} s (goal ${RT.GOAL.window.toFixed(2)}), `
+      + `explosive ${Math.round(st.tol)} reps (goal ${RT.GOAL.tol}); ${st.week} session${st.week === 1 ? '' : 's'} in the last 7 days, this week's load ${st.acwr.toFixed(1)} times your usual.`;
   } else {
-    $('trainSum').innerHTML = '<b>Free play</b> · camera sessions still save, and their reads count toward Train me.';
-    $('trainWhy').innerHTML = '';
+    $('trainStrip').innerHTML = '';
+    $('trainSum').innerHTML = '<b>Free play</b> · camera sessions still save, and they count toward Train me.';
+    $('trainWhy').innerHTML = ''; $('trainNums').innerHTML = '';
   }
   const lv = RT.levelOf(h);
   $('trainLevel').innerHTML = `<b>Level: ${esc(lv.name)}</b>` + (lv.next ? ` · ${esc(lv.next)} needs ${esc(lv.needs.join(', '))}.` : '');
@@ -1067,8 +1247,9 @@ function renderTrain(){
      rts.length ? `fastest median reads in a session: ${rts.join(', ')}` : ''].filter(Boolean).join(' · ');
   $('histList').innerHTML = h.slice(-30).reverse().map(x => {
     const d = new Date(x.date), when = d.toLocaleDateString(undefined, {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
-    const what = x.kind === 'baseline' ? 'Baseline test' : x.kind === 'retest' ? 'Retest' : x.mode === 'free' ? 'Free play' : 'Train me';
-    const bits = [x.holdS != null ? `hold ${sec(x.holdS)}` : '', x.stancePct != null ? `stance ${Math.round(x.stancePct*100)}%` : '',
+    const what = x.kind === 'baseline' ? 'Baseline test' : x.kind === 'retest' ? 'Retest' : x.mode === 'free' ? 'Free play' : x.day && RT.DAYS[x.day] ? RT.DAYS[x.day].name : 'Train me';
+    const hold = x.holdS != null ? x.holdS : ((x.rounds || []).find(r => r.phase === 'hold' && r.hold != null) || {}).hold;
+    const bits = [x.minutes ? `${x.minutes} min` : '', hold != null ? `hold ${sec(hold)}` : '', x.stancePct != null ? `stance ${Math.round(x.stancePct*100)}%` : '',
       x.onTime != null ? `${Math.round(x.onTime*100)}% on time` : '', x.score ? `live ${x.score.you}–${x.score.opp}` : '', x.partial ? 'ended early' : ''].filter(Boolean);
     return `<li>${esc(when)} · ${what}${bits.length ? ' · ' + esc(bits.join(', ')) : ''}</li>`;
   }).join('');
@@ -1173,13 +1354,15 @@ window.addEventListener('resize', resize);
 function startSession(auto, cam){
   ensureAudio();
   const RT = globalThis.RoomTime, train = !!(cam && !auto && settings.train && RT && RT.planNext);
-  const prog = train ? RT.planNext(loadHistory(), Date.now(), {minutes:settings.len, fast:FASTQ}) : null;
+  const prog = train ? RT.planNext(loadHistory(), Date.now(), {minutes:settings.len}) : null;
   const today = prog && prog.session ? prog.session : prog;   // a session plan's adjustments for today
   const P = prog ? progPace(today.windows) : PACE[settings.pace];
+  // each planned round carries its own work and the rest before it (headless checks: short rounds)
+  const plan = prog ? prog.rounds.map(r => FASTQ ? Object.assign({}, r, {work:r.phase === 'hold' ? 20 : 15, rest:4}) : Object.assign({}, r)) : buildPlan(settings.len);
   S = {
-    auto, P, len:settings.len, plan:prog ? prog.rounds : buildPlan(settings.len),
-    workDur:prog ? (FASTQ && prog.kind === 'session' ? 15 : today.work) : settings.quick?30:120,
-    restDur:prog ? (FASTQ ? 4 : today.rest) : settings.quick?8:30,
+    auto, P, len:settings.len, plan,
+    workDur:prog ? today.work : settings.quick?30:120,
+    restDur:prog ? today.rest : settings.quick?8:30,
     prog, windows:prog ? today.windows : null, trials:[], reps:[], fakesBit:0, startedAt:new Date().toISOString(), saved:false,
     r:0, mode:'work', time:0, clock:0, paused:false,
     level:1, padActive:false, padTarget:1, youX:0, vx:0, latchL:false, latchR:false, hist:[], lastLevelEvt:-9,
@@ -1228,7 +1411,7 @@ function roundBlurb(rd){
 function startRound(){
   const rd = S.plan[S.r];
   S.mode = 'work'; S.clock = rd.work || S.workDur;
-  S.R = {phase:rd.phase, work:0, inBand:0, reactions:[], recoveries:[], hits:0, misses:0};
+  S.R = {phase:rd.phase, work:0, inBand:0, reactions:[], recoveries:[], hits:0, misses:0, outT:0, breakT:null};
   S.hold = {t:0, wait:0, inT:0, broke:0, started:false};
   S.cue = null; S.nextCueAt = S.time + 2.0; S.lastMoveT = S.time; S.hiT = 0; S.loT = 0; S.offAngle = 0;
   S.lastCorrection = S.time - 6; S.bot.q = [];
@@ -1253,8 +1436,13 @@ function endWork(){
   S.rounds.push(R); S.cue = null; S.action = null; S.recoverFrom = null;
   if (rd.phase === 'live' && rd.period === rd.periods) S.goes.push({you:S.score.you, opp:S.score.opp});
   if (S.r >= S.plan.length - 1) { finish(); return; }
+  // Train me: what this round says re-tunes the rounds still to come (same end time)
+  if (S.prog && !FASTQ) {
+    const ad = RoomTime.adaptRound(roundRecord(R), S.plan.slice(S.r + 1), S.prog.day);
+    S.plan = S.plan.slice(0, S.r + 1).concat(ad.rounds);
+  }
   if (S.skipRest) { S.skipRest = false; S.r++; startRound(); return; }
-  S.mode = 'rest'; S.clock = S.restDur;
+  S.mode = 'rest'; S.clock = S.plan[S.r + 1].rest != null ? S.plan[S.r + 1].rest : S.restDur;
   const pct = Math.round(100*R.inBand/Math.max(R.work, 0.01));
   let spoken, shown;
   if (rd.phase === 'hold') {
@@ -1319,6 +1507,12 @@ function recordMove(m, hit, rt, stair){
   }
   S.trials.push(t);
 }
+// a round as saved: how long it ran, the share in stance, when the stance broke, a hold's time
+function roundRecord(R){
+  const r = {phase:R.phase, work:Math.round(R.work*10)/10, stancePct:R.work ? Math.round(1000*R.inBand/R.work)/1000 : null, breakT:R.breakT == null ? null : Math.round(R.breakT*10)/10};
+  if (R.phase === 'hold') { r.hold = R.holdS == null ? null : Math.round(R.holdS*10)/10; r.stancePct = null; }
+  return r;
+}
 function loadHistory(){ try { return JSON.parse(localStorage.getItem('roomtime.history') || '[]') || []; } catch(e) { return []; } }
 function saveSession(partial){
   if (!S || !S.cam || S.auto || S.saved) return null;
@@ -1334,18 +1528,21 @@ function saveSession(partial){
   const speedIn = rr => med(S.reps.filter(x => rr.includes(x.r)).map(x => x.speed));
   const hold = rs.find(r => r.phase === 'hold');
   const w = S.windows || Object.fromEntries(RT.PROG.moves.map(m => [m, S.P.win]));
+  const speeds = S.reps.map(x => x.speed);
   const rec = {
-    date:S.startedAt, mode:S.prog ? 'train' : 'free', kind:S.prog ? S.prog.kind : 'free', partial:!!partial,
-    minutes:Math.round((S.plan.reduce((a, rd) => a + (rd.work || S.workDur), 0) + (S.plan.length - 1)*S.restDur)/60),
+    date:S.startedAt, mode:S.prog ? 'train' : 'free', kind:S.prog ? 'session' : 'free', day:S.prog ? S.prog.day : null, partial:!!partial,
+    minutes:Math.round(S.time/60),
     work:S.prog ? S.prog.work : S.workDur, rest:S.prog ? S.prog.rest : S.restDur, cap:S.prog ? S.prog.cap : S.cap,
     readWindow:RT.PROG.moves.reduce((a, m) => a + w[m], 0)/RT.PROG.moves.length,
     onTime:S.trials.length ? S.trials.filter(t => t.h).length/S.trials.length : null,
-    rounds:rs.map(r => ({phase:r.phase, stancePct:r.work ? Math.round(1000*r.inBand/r.work)/1000 : null})),
+    rounds:rs.map(roundRecord),
     stancePct:sum(play, r => r.work) ? sum(play, r => r.inBand)/sum(play, r => r.work) : null,
     holdS:hold ? hold.holdS : null, moves:RT.moveStats(S.trials), trials:S.trials,
     speed:{first:withReps.length >= 3 ? speedIn(withReps.slice(0, 2)) : null, last:withReps.length >= 3 ? speedIn(withReps.slice(-2)) : null},
-    explosive:S.explosive, score:S.goes.length ? S.goes[S.goes.length - 1] : null, fakesBit:S.fakesBit
+    explosive:S.explosive, explosiveTol:RT.explosiveTol(speeds), tolOpen:RT.speedHolding(speeds),
+    score:S.goes.length ? S.goes[S.goes.length - 1] : null, fakesBit:S.fakesBit
   };
+  rec.load = Math.round(RT.loadOf(rec)*100)/100;
   const h = loadHistory(); h.push(rec);
   try { localStorage.setItem('roomtime.history', JSON.stringify(h)); } catch(e) {}
   persistStorage();
@@ -1734,6 +1931,9 @@ function update(dt){
   if (S.mode === 'work') {
     const credit = inBand || !!S.action;
     S.R.work += dt; if (credit) S.R.inBand += dt;
+    // when the stance first broke and stayed broken (3 s out of the band)
+    S.R.outT = credit ? 0 : S.R.outT + dt;
+    if (S.R.breakT == null && S.R.outT >= RoomTime.PROG.breakRoundS && rd.phase !== 'hold') S.R.breakT = Math.max(0, S.R.work - S.R.outT);
     S.bandEMA += ((credit ? 1 : 0) - S.bandEMA)*Math.min(1, dt/6);
     if (rd.phase === 'live') liveUpdate(dt); else if (rd.phase === 'hold') holdUpdate(dt); else drillUpdate(dt);
     if (S.level > BAND.hi + 0.02 && !S.action) S.hiT += dt; else S.hiT = 0;
@@ -1972,11 +2172,7 @@ function draw(){
     ctx.fillStyle = COL.shade; ctx.fillRect(0, 0, W, H);
     ctx.textAlign = 'center'; ctx.fillStyle = COL.ink;
     if (S.paused) { ctx.font = FD(700, 44); ctx.fillText('Paused', W/2, H*0.45); }
-    else if (S.mode === 'calib') {
-      ctx.font = FD(700, 44); ctx.fillText('Warm-up calibration', W/2, H*0.36);
-      ctx.font = FB(500, 15); ctx.fillText(S.calibNote || '', W/2, H*0.36 + 30);
-      ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Three holds, then shuffle to your left and pause, then to your right and pause.', W/2, H*0.36 + 54);
-    }
+    else if (S.mode === 'calib') drawCalib();
     else {
       const next = S.plan[S.r + 1];
       ctx.font = FD(700, 44); ctx.fillText('Reset ' + fmtClock(S.clock), W/2, H*0.36);
@@ -1984,6 +2180,56 @@ function draw(){
       if (next) { ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Next: ' + roundTitle(next) + ' · ' + roundBlurb(next), W/2, H*0.36 + 54); }
     }
   }
+}
+
+// The warm-up calibration on the game screen: a step row that ticks as each part saves, a ring that fills through
+// each 3 s hold, and while you shuffle a floor bar with you on it and each edge as it sets. Your left is on the left.
+function drawCalib(){
+  const v = S.calibView, now = performance.now();
+  ctx.textAlign = 'center'; ctx.fillStyle = COL.ink;
+  ctx.font = FD(700, clamp(W*0.05, 26, 40)); ctx.fillText('Warm-up calibration', W/2, H*0.2);
+  if (v && v.steps.length) {
+    const pw = clamp(W*0.15, 84, 130), gap = 10, x0 = W/2 - (v.steps.length*pw + (v.steps.length - 1)*gap)/2, y = H*0.27;
+    v.steps.forEach((st, i) => {
+      const x = x0 + i*(pw + gap), col = st.state === 'done' ? COL.green : st.state === 'skip' ? COL.amber : st.state === 'now' ? COL.ink : COL.muted;
+      ctx.lineWidth = st.state === 'now' ? 3 : 2; ctx.strokeStyle = col; ctx.fillStyle = st.state === 'done' ? COL.green : 'transparent';
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, pw, 34, 17) : ctx.rect(x, y, pw, 34); if (st.state === 'done') ctx.fill(); ctx.stroke();
+      ctx.fillStyle = st.state === 'done' ? COL.bg : col; ctx.font = FB(600, 14);
+      ctx.fillText((st.state === 'done' ? '✓ ' : st.state === 'skip' ? '✕ ' : '') + st.name, x + pw/2, y + 22);
+    });
+  }
+  const cy = H*0.52, sw = v && v.sweep, sweeping = sw && v.steps.some(x => x.key === 'sweep' && x.state === 'now');
+  if (sweeping) {
+    // the floor bar: meters across, your left on the left
+    const bw = Math.min(W*0.78, 720), bx = W/2 - bw/2, lo = Math.min(-2, (sw.left != null ? sw.left : 0) - 0.3, (sw.x != null ? sw.x : 0) - 0.3);
+    const hi = Math.max(2, (sw.right != null ? sw.right : 0) + 0.3, (sw.x != null ? sw.x : 0) + 0.3), X = m => bx + (m - lo)/(hi - lo)*bw;
+    ctx.fillStyle = COL.panel || 'rgba(255,255,255,0.08)'; ctx.fillRect(bx, cy - 8, bw, 16);
+    if (sw.left != null && sw.right != null) { ctx.fillStyle = COL.green; ctx.globalAlpha = 0.35; ctx.fillRect(X(sw.left), cy - 8, X(sw.right) - X(sw.left), 16); ctx.globalAlpha = 1; }
+    // the edge of the picture: the bar's end flashes on the side you're heading
+    if (now - sw.edgeAt < 450 && sw.side) { ctx.fillStyle = COL.amber; ctx.fillRect(sw.side === 'left' ? bx : bx + bw - 14, cy - 14, 14, 28); }
+    for (const [k, m] of [['left', sw.left], ['right', sw.right]]) {
+      if (m == null) continue;
+      const fresh = now - sw.setAt < 900;
+      ctx.fillStyle = COL.green; ctx.fillRect(X(m) - 3, cy - 22, 6, 44);
+      ctx.font = FB(700, fresh ? 16 : 13); ctx.fillText('✓ ' + (k === 'left' ? 'Left' : 'Right') + ' edge', X(m), cy - 30);
+    }
+    if (sw.x != null) { ctx.fillStyle = COL.ink; ctx.beginPath(); ctx.arc(X(sw.x), cy, 12, 0, Math.PI*2); ctx.fill(); }
+    if (sw.side && sw[sw.side] == null) {
+      ctx.fillStyle = COL.ink; ctx.font = FD(700, 26);
+      ctx.fillText(sw.side === 'left' ? '← to your left, then pause' : 'to your right, then pause →', W/2, cy + 54);
+    }
+  } else if (v && v.hold) {
+    const h = v.hold, k = clamp((now - h.t0)/h.ms, 0, 1), ok = h.done && !h.lost, r = clamp(H*0.08, 34, 60);
+    ctx.lineWidth = 9; ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(W/2, cy, r, 0, Math.PI*2); ctx.stroke();
+    ctx.strokeStyle = h.lost ? COL.amber : ok ? COL.green : COL.ink;
+    ctx.beginPath(); ctx.arc(W/2, cy, r, -Math.PI/2, -Math.PI/2 + Math.PI*2*(h.done ? 1 : k)); ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; ctx.font = FD(700, r*0.9);
+    ctx.fillText(h.lost ? '✕' : ok ? '✓' : String(Math.max(1, Math.ceil((1 - k)*h.ms/1000))), W/2, cy + r*0.32);
+  }
+  ctx.fillStyle = COL.ink; ctx.font = FB(500, 15); ctx.fillText(S.calibNote || '', W/2, H*0.7);
+  ctx.fillStyle = COL.muted; ctx.font = FB(500, 13);
+  ctx.fillText(v && v.steps.length === 2 ? 'Quick check: stand, then shuffle to your left and pause, then to your right and pause.'
+    : 'Three holds, then shuffle to your left and pause, then to your right and pause.', W/2, H*0.7 + 24);
 }
 
 function updateTopBar(){
@@ -2017,7 +2263,7 @@ function buildDebrief(){
   const hits = rs.reduce((a, r) => a + r.hits, 0), misses = rs.reduce((a, r) => a + r.misses, 0);
   const goes = S.goes.map((gg, i) => `<div><span>Live go${S.goes.length > 1 ? ' ' + (i + 1) : ''}</span><span>You ${gg.you} · ${gg.opp} Opp</span></div>`).join('');
   $('debriefIn').innerHTML = `
-    <div><h2>Debrief</h2><div class="sub">${S.prog ? (S.prog.kind === 'session' ? 'Train me' : S.prog.kind === 'baseline' ? 'Baseline test' : 'Retest') + ' · camera' : `${S.len}-minute plan · ${S.auto ? 'auto-play' : S.cam ? 'camera' : 'touch'} · ${settings.quick ? 'quick look' : 'full length'}`}</div></div>
+    <div><h2>Debrief</h2><div class="sub">${S.prog ? `Train me · ${S.prog.dayName} · ${Math.round(S.time/60)} min` : `${S.len}-minute plan · ${S.auto ? 'auto-play' : S.cam ? 'camera' : 'touch'} · ${settings.quick ? 'quick look' : 'full length'}`}</div></div>
     <div class="big3">
       <div><b>${pct}%</b><span>time in stance</span></div>
       <div><b>${reac === null ? '–' : Math.round(reac*1000)}</b><span>reaction, ms</span></div>
@@ -2045,38 +2291,57 @@ function buildDebrief(){
 function trainDebrief(){
   const RT = globalThis.RoomTime, rec = S.savedRec;
   if (!rec || !RT) return '';
-  const h = loadHistory(), lv = RT.levelOf(h), nx = RT.planNext(h, Date.now() + 18*3600e3, {minutes:settings.len});
+  const h = loadHistory(), lv = RT.levelOf(h), nx = RT.planNext(h, Date.now() + 20*3600e3, {minutes:settings.len});
+  const st = RT.state(h, Date.now() + 60e3), q = RT.qualities(st), sec = v => v >= 60 ? `${Math.floor(v/60)}:${String(Math.round(v%60)).padStart(2, '0')}` : `${Math.round(v)} s`;
+  const holdR = rec.rounds.find(r => r.phase === 'hold');
   const rows = RT.PROG.moves.filter(m => rec.moves[m] && rec.moves[m].n).map(m => {
     const st = rec.moves[m];
     return `<div><span>${RT.MOVE_NAMES[m][0].toUpperCase() + RT.MOVE_NAMES[m].slice(1)}</span><span>${Math.round(st.hitRate*100)}% of ${st.n}${st.rtMed != null ? ' · ' + Math.round(st.rtMed*1000) + ' ms' : ''}</span></div>`;
   }).join('');
-  const t = nx.session || nx;
-  const next = nx.kind === 'session' ? `${nx.rounds.length} rounds of ${t.work} s, ${t.rest} s rest, cap ${t.cap}` : nx.kind === 'retest' ? 'retest' : 'baseline test';
+  const next = `${nx.dayName}, ${nx.rounds.length} rounds of ${sec(nx.work)}, ${sec(nx.rest)} rest`;
   return `<div class="card"><h3>Saved${rec.partial ? ' (ended early)' : ''}</h3><div class="rows">
-      ${rec.holdS != null ? `<div><span>Stance hold</span><span>${Math.round(rec.holdS)} s</span></div>` : ''}
+      ${holdR && holdR.hold != null ? `<div><span>Stance hold</span><span>${Math.round(holdR.hold)} s</span></div>` : ''}
       ${rows}
+      ${rec.explosive ? `<div><span>Shots and sprawls</span><span>${rec.explosive}${rec.tolOpen ? ', speed held' : ', speed faded after ' + rec.explosiveTol}</span></div>` : ''}
       ${rec.fakesBit ? `<div><span>Bit on fakes</span><span>${rec.fakesBit}</span></div>` : ''}
+      <div><span>Stance capacity</span><span>${sec(st.cap)}</span></div>
+      <div><span>Reads</span><span>${q.readWindow.toFixed(2)} s</span></div>
+      <div><span>Explosive</span><span>${Math.round(st.tol)} reps</span></div>
       <div><span>Level</span><span>${lv.name}</span></div>
-      <div><span>Next session</span><span>${next}</span></div>
+      <div><span>Next session (tomorrow)</span><span>${next}</span></div>
     </div></div>`;
 }
 
 // A line on the menu when the 3D view can't run on this device, with the reason and the Safari version, so it can be fixed.
-function check3d(){
+// Checked at 8 s and again at 25 s (a slow connection may still be loading it). With no error caught, it tries to
+// load three.js itself to get the browser's own reason.
+function check3d(last){
   const R = globalThis.RoomTime3D, v = (navigator.userAgent.match(/Version\/([\d.]+)/) || [])[1];
-  const why = !R ? 'the 3D library did not load' : R.error;
-  if (!why) return;
-  $('r3note').textContent = `3D view off on this device: ${why}${v ? ' (Safari ' + v + ')' : ''}. The flat view runs instead.`;
-  $('r3note').hidden = false;
+  const show = why => {
+    $('r3note').textContent = `3D view off on this device: ${why}${v ? ' (Safari ' + v + ')' : ''}. The flat view runs instead.`;
+    $('r3note').hidden = false;
+  };
+  if (R && R.ok) { $('r3note').hidden = true; return; }
+  if (R && R.error) return show(R.error);
+  if (globalThis.RoomTime3DErr) return show(globalThis.RoomTime3DErr);
+  const noMaps = typeof HTMLScriptElement !== 'undefined' && HTMLScriptElement.supports && !HTMLScriptElement.supports('importmap');
+  if (noMaps) return show('this browser has no import maps');
+  if (!last) { setTimeout(() => check3d(true), 17000); return; }
+  import('three').then(() => show('three.js loaded but the 3D view did not start' + (R ? '' : ' (its script did not run)')))
+    .catch(e => show('three.js did not load: ' + (e && e.message || e)));
 }
-setTimeout(check3d, 8000);
+setTimeout(() => check3d(false), 8000);
 
 // read-only view of the game for the 3D layer and camera play
 globalThis.RoomTimeGame = {get S(){ return S; }, get settings(){ return settings; }, cueGlow:() => S ? cueGlow() : null, BAND, ACT,
   start:startSession, onQuit:null, history:loadHistory,
   camMove:(type, pre, ev) => {
     const t = type === 'down_block' ? 'block' : type;
-    if (ev && S && S.mode === 'work' && (t === 'shot' || t === 'sprawl') && ev.ms > 0) S.reps.push({r:S.r, speed:(ev.from - ev.to)/(ev.ms/1000)});
+    if (ev && S && S.mode === 'work' && (t === 'shot' || t === 'sprawl') && ev.ms > 0) {
+      S.reps.push({r:S.r, speed:(ev.from - ev.to)/(ev.ms/1000)});
+      // Train me: once shots and sprawls lose their speed, that's the explosive work done for today
+      if (S.prog && !RoomTime.speedHolding(S.reps.map(x => x.speed)) && S.cap > S.explosive + 1) S.cap = S.explosive + 1;
+    }
     act(t, pre);
   },
   begin:() => { if (S && S.mode === 'calib') startRound(); }};
@@ -2541,6 +2806,11 @@ function note(text){
   const S = globalThis.RoomTimeGame && globalThis.RoomTimeGame.S;
   if (S && S.mode === 'calib') S.calibNote = text;
 }
+// What the game screen draws during the warm-up calibration, so you can see each part register: a step row that
+// ticks as each part saves, a ring that fills through each hold, and the floor bar while you shuffle.
+const cview = {steps:[], hold:null, sweep:null};
+function cviewSync(){ const S = globalThis.RoomTimeGame && globalThis.RoomTimeGame.S; if (S && S.mode === 'calib') S.calibView = cview; }
+function cviewStep(key, state){ const st = cview.steps.find(x => x.key === key); if (st) st.state = state; cviewSync(); }
 let cal = store.get('cal');
 L.cal = cal;
 
@@ -2550,15 +2820,19 @@ L.cal = cal;
 async function captureSweep(){
   note('Calibrate: Floor');
   const edges = {};
+  cview.hold = null; cview.sweep = {x:null, left:null, right:null, side:null, edgeAt:-1e9, setAt:-1e9}; cviewSync();
+  const track = f => { if (f.r && f.r.X != null) cview.sweep.x = f.r.X; };
+  L.on.add(track);
+  try {
   for (const [side, name, line] of [[-1, 'left', 'Shuffle to your left, to your wall or until it beeps. Pause there.'],
                                     [1, 'right', 'Now all the way to your right, to your wall. Pause there.']]) {
-    say(line); note('Floor: to your ' + name);
+    say(line); note('Floor: to your ' + name); cview.sweep.side = name;
     if (!await wait(1200, 'cal')) return null;
     const pass = new RT.EdgePass(side), t0 = now();
     let res = null, edgeAt = 0;
     const fn = f => {
       if (res || !f.r || f.r.X == null) return;
-      if (f.fc.hint === 'Move to the middle' && f.t - edgeAt > 700) { edgeAt = f.t; beep(1320, 0.05); }
+      if (f.fc.hint === 'Move to the middle' && f.t - edgeAt > 700) { edgeAt = f.t; beep(1320, 0.05); cview.sweep.edgeAt = performance.now(); }
       res = pass.push(f.t, f.r.X);
     };
     L.on.add(fn);
@@ -2567,12 +2841,13 @@ async function captureSweep(){
     if (!res) res = pass.timeout();
     if (!res) { say('Floor skipped, move further each way.'); note('Floor skipped: not enough to your ' + name); return null; }
     beep(990, 0.1); say(name === 'left' ? 'Left edge set.' : 'Right edge set.');
-    edges[name] = res.edge;
+    edges[name] = res.edge; cview.sweep[name] = res.edge; cview.sweep.setAt = performance.now();
     if (!await wait(900, 'cal')) return null;
   }
   const width = edges.right - edges.left;
   if (width < 0.5) { say('Floor skipped, move further each way.'); note('Floor skipped: under half a meter wide'); return null; }
   return {floor:{left:edges.left, right:edges.right, width, center:(edges.left + edges.right)/2}};
+  } finally { L.on.delete(track); }
 }
 
 async function capturePose(pose){
@@ -2593,11 +2868,13 @@ async function capturePose(pose){
   const fn = f => { seen++; if (good(f)) got.push(f.m); };
   if (pose === 'square' || pose === 'stagger') say('Hold.');
   beep(660, 0.1); L.on.add(fn);
+  cview.hold = {t0:performance.now(), ms:HOLD_MS, done:null}; cviewSync();
   const ok = await wait(HOLD_MS, 'cal');
   L.on.delete(fn);
+  if (cview.hold) cview.hold.done = performance.now();
   if (!ok) return null;
   // most of the hold must be usable frames, whatever the frame rate
-  if (got.length < Math.max(MIN_FRAMES, 0.6*seen)) { say(info.name + ' skipped, lost you.'); note(`${info.name}: ${got.length} of ${seen} frames usable`); return null; }
+  if (got.length < Math.max(MIN_FRAMES, 0.6*seen)) { if (cview.hold) cview.hold.lost = true; say(info.name + ' skipped, lost you.'); note(`${info.name}: ${got.length} of ${seen} frames usable`); return null; }
   beep(990, 0.12);
   return got;
 }
@@ -2621,6 +2898,8 @@ async function calibrate(poses){
   if (busy === 'cal') { cancelled.cal = true; return; }
   if (!claim('cal')) return;
   const btn = $('calBtn'); btn.textContent = 'Stop'; btn.classList.add('on');
+  cview.steps = poses.map(p => ({key:p, name:{stand:'Standing', square:'Square', stagger:'Staggered', sweep:'Floor'}[p], state:'todo'}));
+  cview.hold = null; cview.sweep = null; cviewSync();
   // poses not redone keep their saved medians, and the walls stay unless swept again
   const oldFloor = cal && cal.floor ? cal.floor : null, oldFullAt = cal ? cal.fullAt || cal.at : null, caps = {};
   const oldForm = {square:cal && cal.square && cal.square.form, stagger:cal && cal.stagger && cal.stagger.form};
@@ -2635,9 +2914,11 @@ async function calibrate(poses){
       if (!await wait(BREAK_MS, 'cal')) break;
     }
     prev = p;
+    cviewStep(p, 'now');
     const g = await capturePose(p);
     if (cancelled.cal || !L.src) break;
     if (g) { caps[p] = g; got++; }
+    cviewStep(p, g ? 'done' : 'skip');
   }
   if (got && caps.stand.length) {
     setCal(caps);

@@ -1,77 +1,118 @@
-// The progression algorithm: plans from saved sessions, the reaction staircase, records and CSV.
+// Train me: the adaptive planner (fitness and fatigue, capacity, tolerance, reads, day types), the mid-session
+// adjustment, the read staircase, records, CSV, levels and backup. Season tests run a simulated player through the
+// real planner (test/helpers/season.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadRT } from './helpers/load.mjs';
+import { simulate, weekdays } from './helpers/season.mjs';
 
 const RT = loadRT();
 const DAY = 86400000, T0 = Date.parse('2026-11-02T12:00:00Z');
 const at = (d) => new Date(T0 + d * DAY).toISOString();
 const test0 = (d, holdS = 60) => ({ date: at(d), mode: 'progression', kind: 'baseline', holdS, stancePct: 0.7, rounds: [{}, {}, {}], trials: [] });
 const sess = (d, o = {}) => ({ date: at(d), mode: 'progression', kind: 'session', work: 45, rest: 45, cap: 16, stancePct: 0.7, rounds: [{}, {}, {}, {}, {}, {}], trials: [], ...o });
+const length = (p) => p.rounds.reduce((a, r) => a + r.work + r.rest, 0);
+const round = (phase, work, stancePct, o = {}) => ({ phase, work, stancePct, ...o });
 
-test('no history: the baseline test comes first', () => {
-  const p = RT.planNext([], T0);
-  assert.equal(p.kind, 'baseline');
-  assert.equal(p.rounds.map((r) => r.phase).join(), 'hold,react,live');
+test('first session: no test, a normal session at the length you pick', () => {
+  for (const minutes of [10, 15, 20, 30]) {
+    const p = RT.planNext([], T0, { minutes });
+    assert.equal(p.day, 'start');
+    assert.ok(!p.rounds.some((r) => r.phase === 'hold' || r.phase === 'react'), 'no test rounds');
+    assert.ok(Math.abs(length(p) - minutes * 60) <= 15, `${minutes} min runs ${length(p)} s`);
+    assert.equal(p.rounds[0].phase, 'warm');
+    assert.ok(p.rounds.some((r) => r.phase === 'live'));
+  }
 });
 
-test('the first session after the test starts from your stance hold', () => {
-  const p = RT.planNext([test0(0, 60)], T0 + DAY);
-  assert.equal(p.kind, 'session');
-  assert.equal(p.work, 35); // 60% of a 60 s hold, to 5 s
-  assert.equal(p.rest, 45);
-  const strong = RT.planNext([test0(0, 200)], T0 + DAY);
-  assert.equal(strong.work, 120); assert.equal(strong.rest, 30);
-  const total = p.rounds.length * p.work + (p.rounds.length - 1) * p.rest;
-  assert.ok(total > 10 * 60 && total < 17 * 60, 'about 15 minutes: ' + total);
+test('every session fits the length you pick, any day type', () => {
+  const h = simulate(RT, weekdays(3)).history;
+  for (const minutes of [10, 15, 20, 30]) for (const d of [0, 1, 2, 5]) {
+    const p = RT.planNext(h, T0 + (21 + d) * DAY, { minutes });
+    assert.ok(Math.abs(length(p) - minutes * 60) <= 15, `${p.day} ${minutes} min runs ${length(p)} s`);
+  }
 });
 
-test('stance holding: rounds get longer, then rest gets shorter, one step a week at most', () => {
-  const h = [test0(0), sess(1, { stancePct: 0.86 }), sess(4, { stancePct: 0.84 }), sess(7, { stancePct: 0.88 })];
-  assert.equal(RT.planNext(h, T0 + 8 * DAY).work, 60);
-  const soon = [test0(0), sess(1, { stancePct: 0.86 }), sess(2, { stancePct: 0.84 }), sess(3, { stancePct: 0.88 })];
-  const q = RT.planNext(soon, T0 + 4 * DAY);
-  assert.equal(q.work, 45, 'three sessions in three days: not yet');
-  assert.ok(q.why.some((x) => /next step comes after 3 more days/.test(x)), q.why.join(' | '));
-  const full = [test0(0), sess(1, { work: 120, rest: 40, stancePct: 0.86 }), sess(4, { work: 120, rest: 40, stancePct: 0.9 }), sess(7, { work: 120, rest: 40, stancePct: 0.88 })];
-  const p = RT.planNext(full, T0 + 8 * DAY);
-  assert.equal(p.work, 120); assert.equal(p.rest, 35);
-  // the step resets the clock: the session after a step up stays put
-  const stepped = [...h, sess(8, { work: 60, stancePct: 0.9 })];
-  assert.equal(RT.planNext(stepped, T0 + 9 * DAY).work, 60);
+test('capacity: read from every round, smooth, recent rounds counting most', () => {
+  assert.equal(RT.capacityObs(round('tech', 40, 0.75)), 40, 'at 75% in stance the round was right');
+  assert.ok(Math.abs(RT.capacityObs(round('tech', 40, 0.8)) - 40 * (0.8 / 0.75) ** 2) < 1e-9);
+  assert.equal(RT.capacityObs(round('tech', 40, 0.95)), 50, 'at most a quarter more per round');
+  assert.equal(RT.capacityObs(round('tech', 40, 0.4)), 24, 'at most 40% less');
+  assert.equal(RT.capacityObs(round('tech', 60, 0.72, { breakT: 20 })), 36, 'broke early and stayed broken: down to the 40% floor');
+  assert.equal(RT.capacityObs(round('warm', 40, 0.9)), null);
+  assert.equal(RT.capacityObs({ phase: 'hold', hold: 100 }), 60);
+  // a session of rounds held well raises it; badly, lowers it; a month later, a new reading counts most
+  const good = sess(0, { rounds: Array.from({ length: 10 }, () => round('tech', 30, 0.82)) });
+  const bad = sess(0, { rounds: Array.from({ length: 10 }, () => round('tech', 30, 0.6)) });
+  assert.ok(RT.state([good], T0 + DAY).cap > 30 && RT.state([bad], T0 + DAY).cap < 30);
+  const later = sess(30, { rounds: Array.from({ length: 10 }, () => round('tech', 40, 0.75)) });
+  const c = RT.state([bad, later], T0 + 31 * DAY).cap;
+  const c0 = RT.state([bad], T0 + 31 * DAY).cap;
+  assert.ok(c > c0 + 5 && c < 40, `the recent session counts most: ${c0.toFixed(1)} without it, ${c.toFixed(1)} with it`);
 });
 
-test('one bad day alone moves nothing; a low trend adds rest', () => {
-  const good = [0.84, 0.86, 0.85, 0.87, 0.85];
-  const h = [test0(0), ...good.map((v, i) => sess(2 * i + 1, { stancePct: v })), sess(11, { stancePct: 0.55 })];
-  const p = RT.planNext(h, T0 + 12 * DAY);
-  assert.equal(p.work, 45, 'no progress after a bad day'); assert.equal(p.rest, 45, 'and no back-off either');
-  const low = [test0(0), sess(1, { stancePct: 0.5 }), sess(2, { stancePct: 0.55 }), sess(3, { stancePct: 0.52 })];
-  assert.equal(RT.planNext(low, T0 + 4 * DAY).rest, 55);
+test('an easy round only ever raises capacity', () => {
+  const easy = sess(0, { rounds: Array.from({ length: 10 }, () => round('tech', 20, 0.97)) });
+  assert.ok(RT.state([easy], T0 + DAY).cap >= RT.PROG.cap0, 'short easy rounds say at least 25 s, under the 30 s start: nothing new');
+  const base = sess(0, { rounds: Array.from({ length: 10 }, () => round('tech', 50, 0.75)) });
+  const after = sess(1, { rounds: Array.from({ length: 10 }, () => round('tech', 20, 0.97)) });
+  assert.ok(Math.abs(RT.state([base, after], T0 + 2 * DAY).cap - RT.state([base], T0 + 2 * DAY).cap) < 1e-9);
 });
 
-test('a downward trend against the last four weeks is a deload', () => {
-  const h = [test0(0), ...[0.85, 0.86, 0.84, 0.85].map((v, i) => sess(i + 1, { stancePct: v })), ...[0.7, 0.72, 0.71].map((v, i) => sess(i + 6, { stancePct: v }))];
-  const p = RT.planNext(h, T0 + 10 * DAY);
-  assert.equal(p.deload, true);
-  assert.ok(p.windows.sprawl > RT.PROG.window0, 'easier reads');
-  assert.ok(p.cap < 16 && p.work < 45);
+test('history fades: this week counts in fatigue, the last six weeks in fitness, two months ago barely', () => {
+  const L = (d) => sess(d, { load: 10 });
+  const st = RT.state([L(0), L(1), L(2), L(3), L(4)], T0 + 5 * DAY);
+  assert.equal(st.fat, 50); assert.equal(st.week, 5);
+  assert.equal(st.fit, RT.PROG.usual0, 'this week is not part of your usual week: the starting usual holds');
+  const old = RT.state([L(0)], T0 + 60 * DAY);
+  assert.equal(old.fat, 0);
+  // capacity readings: half weight every 21 days, and a long layoff drifts back toward the start
+  const hi = sess(0, { rounds: Array.from({ length: 12 }, () => round('tech', 60, 0.75)) });
+  const c1 = RT.state([hi], T0 + DAY).cap, c60 = RT.state([hi], T0 + 60 * DAY).cap;
+  assert.ok(c1 > 50 && c60 < c1 && c60 > RT.PROG.cap0, `${c1.toFixed(1)} the next day, ${c60.toFixed(1)} two months later`);
 });
 
-test('a retest every 4 weeks, after at least 6 sessions', () => {
-  const h = [test0(0), ...Array.from({ length: 6 }, (_, i) => sess(4 * i + 1))];
-  assert.equal(RT.planNext(h, T0 + 28 * DAY).kind, 'retest');
-  assert.equal(RT.planNext(h, T0 + 26 * DAY).kind, 'session', 'not before 4 weeks');
-  assert.equal(RT.planNext(h.slice(0, 6), T0 + 28 * DAY).kind, 'session', 'not before 6 sessions');
+test('the day: what you did today, this week and lately decides it', () => {
+  const h = simulate(RT, weekdays(4)).history;
+  const last = Date.parse(h[h.length - 1].date);
+  const second = RT.planNext(h, last + 2 * 3600e3, { minutes: 15 });
+  assert.equal(second.day, 'technique'); assert.ok(second.why.some((x) => /Session 2 today/.test(x)), second.why.join(' | '));
+  const fresh = RT.planNext(h, last + 2 * DAY, { minutes: 15 });
+  assert.ok(['volume', 'pace', 'live'].includes(fresh.day), 'a normal day: ' + fresh.day);
+  assert.ok(second.cap < fresh.cap && second.windows.sprawl > fresh.windows.sprawl, 'the second session today is lighter');
+  const back = RT.planNext(h, last + 9 * DAY, { minutes: 15 });
+  assert.equal(back.day, 'technique'); assert.ok(back.why.some((x) => /Back after 9 days/.test(x)));
+  // a big week: doubles and long sessions push this week's load over your usual
+  const big = simulate(RT, [...weekdays(3), ...[21, 21.4, 22, 22.4, 23, 23.4].map((d) => ({ day: Math.floor(d), hour: (d % 1) * 20, minutes: 30 }))]).history;
+  const after = RT.planNext(big, T0 + 24 * DAY, { minutes: 15 });
+  assert.equal(after.day, 'technique'); assert.ok(after.state.acwr > RT.PROG.acwrMax, 'acwr ' + after.state.acwr.toFixed(2));
 });
 
-test('explosive cap: down when your last round fades, up once a week when it holds', () => {
-  const fade = [test0(0), sess(1, { speed: { first: 2.0, last: 1.4 } })];
-  assert.equal(RT.planNext(fade, T0 + 2 * DAY).cap, 14);
-  const held = [test0(0), sess(1, { speed: { first: 2.0, last: 1.95 } }), sess(8, { speed: { first: 2.0, last: 1.95 } })];
-  assert.equal(RT.planNext(held, T0 + 9 * DAY).cap, 18);
-  const tooSoon = [test0(0), sess(5, { speed: { first: 2.0, last: 1.95 } })];
-  assert.equal(RT.planNext(tooSoon, T0 + 6 * DAY).cap, 16, 'not twice in a week');
+test('no plan takes this week over 1.5 times your usual load', () => {
+  const { sessions } = simulate(RT, [...weekdays(4), ...Array.from({ length: 10 }, (_, i) => ({ day: 28 + i, minutes: 30 }))]);
+  for (const s of sessions.slice(5)) {
+    if (s.plan.day === 'technique') continue;
+    const st = s.state, L = s.plan.rounds.reduce((a, r) => a + r.work / 60 * RT.PROG.loadK[r.phase], 0) + s.plan.cap * RT.PROG.repLoad;
+    assert.ok((st.fat6 + L) / st.fit <= RT.PROG.acwrCap + 1e-9, `day ${s.day}: ${((st.fat6 + L) / st.fit).toFixed(2)}`);
+  }
+});
+
+test('mid-session: a hard round shortens what is left, a strong one lengthens it, the end time holds', () => {
+  const up = [{ phase: 'tech', work: 30, rest: 40 }, { phase: 'sit', work: 30, rest: 40 }, { phase: 'live', work: 30, rest: 40, period: 1 }];
+  const hard = RT.adaptRound(round('tech', 30, 0.55), up), strong = RT.adaptRound(round('tech', 30, 0.9), up);
+  assert.ok(hard.rounds.every((r) => r.work < 30) && strong.rounds.every((r) => r.work > 30));
+  for (const a of [hard, strong]) a.rounds.forEach((r, i) => assert.equal(r.work + r.rest, 70, 'work plus rest unchanged'));
+  assert.ok(RT.adaptRound(round('tech', 30, 0.9), up, 'technique').rounds.every((r) => r.work === 30), 'a technique day never grows');
+  const tight = RT.adaptRound(round('tech', 30, 0.95), [{ phase: 'tech', work: 30, rest: 22 }]).rounds[0];
+  assert.ok(tight.rest >= RT.PROG.restMin, 'rest never under the minimum');
+});
+
+test('explosive tolerance: reps until the speed fades', () => {
+  const fade = [1, 1, 1, 0.98, 0.96, 0.95, 0.9, 0.85, 0.78, 0.75, 0.7];
+  assert.equal(RT.explosiveTol(fade), 8); assert.equal(RT.speedHolding(fade), false);
+  const held = Array(10).fill(1);
+  assert.equal(RT.explosiveTol(held), 12); assert.equal(RT.speedHolding(held), true);
+  assert.equal(RT.explosiveTol([1, 1]), null);
 });
 
 test('the staircase settles where you make about three in four', () => {
@@ -94,50 +135,44 @@ test('every rep counts across sessions, and the weakest move gets more calls', (
   // the staircase as the game runs it: each call at the window it was given, which then steps
   const P = RT.PROG, w = { sprawl: 1.25, snap: 1.25 };
   const t = (m, h, n) => Array.from({ length: n }, () => { const x = { m, h, rt: h ? 0.4 : null, w: w[m] }; w[m] = Math.min(P.wMax, Math.max(P.wMin, w[m] * (h ? P.hitStep : P.missStep))); return x; });
-  const h = [test0(0), sess(1, { trials: [...t('sprawl', true, 10), ...t('snap', false, 4)] }), sess(2, { trials: [...t('snap', true, 2), ...t('snap', false, 4)] })];
-  const p = RT.planNext(h, T0 + 3 * DAY);
-  assert.equal(p.weak, 'snap');
-  assert.ok(Math.abs(p.windows.sprawl - w.sprawl) < 1e-9 && Math.abs(p.windows.snap - w.snap) < 1e-9, 'the next session carries on from the last call');
-  assert.ok(p.windows.sprawl < P.window0 && p.windows.snap > P.window0);
-  assert.ok(p.why.some((x) => /snaps/.test(x)));
+  const h = [sess(1, { trials: [...t('sprawl', true, 10), ...t('snap', false, 4)] }), sess(2, { trials: [...t('snap', true, 2), ...t('snap', false, 4)] })];
+  const st = RT.state(h, T0 + 3 * DAY), p = RT.planNext(h, T0 + 3 * DAY);
+  assert.ok(Math.abs(st.windows.sprawl - w.sprawl) < 1e-9 && Math.abs(st.windows.snap - w.snap) < 1e-9, 'the next session carries on from the last call');
+  assert.equal(p.weak, 'snap'); assert.ok(p.why.some((x) => /snaps/.test(x)));
 });
 
-test('after the baseline, each move starts from your test reads', () => {
+test('older test sessions still count: the hold and the test reads', () => {
   const tr = [0.5, 0.6, 0.7, 0.55, 0.65].map((rt) => ({ m: 'sprawl', h: true, rt }));
-  const p = RT.planNext([{ ...test0(0), trials: tr }], T0 + DAY);
-  assert.ok(Math.abs(p.windows.sprawl - 0.6 * 1.33) < 1e-9, 'median read 0.6 s plus a third: ' + p.windows.sprawl);
-  assert.equal(p.windows.snap, RT.PROG.window0, 'no reads of a move: the default');
+  const st = RT.state([{ ...test0(0, 40), trials: tr }], T0 + DAY);
+  assert.ok(Math.abs(st.windows.sprawl - 0.6 * 1.33) < 1e-9, 'median read plus a third');
+  assert.ok(st.cap < RT.PROG.cap0, 'a 40 s hold says rounds of about 24 s: ' + st.cap.toFixed(1));
+  assert.notEqual(RT.planNext([test0(0, 40)], T0 + DAY).day, 'start');
 });
 
-test('a simulated season: an improving player grows to the goal, a flat one holds', () => {
-  const run = (improve) => {
-    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const g = () => Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
-    const P = RT.PROG, h = [], plans = [];
-    for (let wk = 0; wk < 12; wk++) for (let d = 0; d < 5; d++) {
-      const now = T0 + (wk * 7 + d) * DAY, fit = improve ? wk / 10 : 0;
-      const p = RT.planNext(h, now, { minutes: 15 }), s = p.session || p, win = { ...s.windows }, trials = [];
-      for (const rd of p.rounds) if (rd.phase === 'tech' || rd.phase === 'sit' || rd.phase === 'react') for (let k = 0; k < 4; k++) for (const m of P.moves) {
-        const rt = 0.95 - 0.25 * fit + 0.18 * g(), test = p.kind !== 'session', ww = test ? P.testWindow : win[m], hit = rt < ww;
-        const x = { m, h: hit, rt: hit ? rt : null };
-        if (!test) { x.w = ww / (s.ease || 1); win[m] *= hit ? P.hitStep : P.missStep; }
-        trials.push(x);
-      }
-      const cap = 45 + 120 * fit;
-      const stance = Math.max(0.4, Math.min(0.92, 0.72 + 0.15 * fit - 0.25 * Math.max(0, s.work - cap) / 60 + 0.04 * g()));
-      h.push({ date: new Date(now).toISOString(), mode: 'train', kind: p.kind, minutes: 15, work: p.work, rest: p.rest, cap: p.cap,
-        rounds: p.rounds.map((r) => ({ phase: r.phase })), stancePct: stance, trials, holdS: p.kind !== 'session' ? cap : null, speed: { first: 1, last: 0.9 } });
-      if (p.kind === 'session') plans.push(p);
-    }
-    return plans;
-  };
-  const up = run(true), flat = run(false);
-  const steps = up.slice(1).filter((p, i) => p.work !== up[i].work || p.rest !== up[i].rest).length;
-  assert.ok(up[up.length - 1].work === 120, 'reaches 2:00 rounds in 12 weeks: ' + up.map((p) => p.work).join());
-  assert.ok(steps <= 12, 'about one step a week: ' + steps);
-  assert.ok(flat.every((p) => p.work === 30), 'a flat player stays at 30 s rounds: ' + [...new Set(flat.map((p) => p.work))].join());
-  const lastWin = up[up.length - 1].windows.sprawl;
-  assert.ok(lastWin > 0.75 && lastWin < 0.95, 'reads follow the improving player (74% point about 0.81 s): ' + lastWin.toFixed(2));
+test('a simulated season: an improving player grows, a flat one holds, the day changes', () => {
+  const sched = weekdays(10).map((x, i) => ({ ...x, minutes: i % 5 === 2 ? 30 : 15 }));
+  const up = simulate(RT, sched, { cap: 35 }).sessions, flat = simulate(RT, sched, { cap: 35, grow: 0 }).sessions;
+  const work = (ss, a, b) => ss.slice(a, b).filter((s) => s.minutes === 15 && s.plan.day !== 'technique').map((s) => s.plan.work);
+  const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  assert.ok(avg(work(up, 40, 50)) > avg(work(up, 0, 10)) + 8, `rounds grow: ${avg(work(up, 0, 10)).toFixed(0)} s to ${avg(work(up, 40, 50)).toFixed(0)} s`);
+  assert.ok(Math.abs(avg(work(flat, 40, 50)) - avg(work(flat, 5, 15))) < 8, `a flat player holds: ${avg(work(flat, 5, 15)).toFixed(0)} s, ${avg(work(flat, 40, 50)).toFixed(0)} s`);
+  // the estimate never runs ahead of the player
+  for (const s of up) assert.ok(s.state.cap <= s.me.cap * 1.1, `day ${s.day}: estimate ${s.state.cap.toFixed(0)}, player ${s.me.cap.toFixed(0)}`);
+  // every week has more than one kind of day, and all of them show up
+  const kinds = new Set(up.map((s) => s.plan.day));
+  for (const d of ['volume', 'pace', 'live']) assert.ok(kinds.has(d), 'has ' + d);
+  for (let wk = 1; wk < 10; wk++) assert.ok(new Set(up.filter((s) => Math.floor(s.day / 7) === wk).map((s) => s.plan.day)).size >= 2, 'week ' + wk);
+  // the reads follow the player's own 74% point
+  const last = up[up.length - 1], point = last.me.rt + 0.64 * 0.18, mean = RT.qualities(last.state).readWindow;
+  assert.ok(Math.abs(mean - point) < 0.2, `reads ${mean.toFixed(2)} s, the player's 74% point ${point.toFixed(2)} s`);
+});
+
+test('a 30 minute day is not double the load of a 15', () => {
+  const h = simulate(RT, weekdays(3)).history;
+  const p15 = RT.planNext(h, T0 + 21 * DAY, { minutes: 15 }), p30 = RT.planNext(h, T0 + 21 * DAY, { minutes: 30 });
+  const L = (p) => p.rounds.reduce((a, r) => a + r.work / 60 * RT.PROG.loadK[r.phase], 0) + p.cap * RT.PROG.repLoad;
+  assert.ok(L(p30) < 1.9 * L(p15) && L(p30) > 1.2 * L(p15), `${L(p15).toFixed(1)} and ${L(p30).toFixed(1)}`);
+  assert.ok(p30.rest >= p15.rest);
 });
 
 test('records and CSV', () => {
@@ -150,31 +185,9 @@ test('records and CSV', () => {
   assert.ok(csv[2].includes(',80,') && csv[2].includes(',410'));
 });
 
-test('the plan fits the length you pick', () => {
-  const h = [test0(0, 120)];
-  for (const minutes of [10, 15, 20, 30]) {
-    const p = RT.planNext(h, T0 + DAY, { minutes });
-    const total = p.rounds.length * p.session.work + (p.rounds.length - 1) * p.session.rest;
-    assert.ok(Math.abs(total - minutes * 60) <= p.session.work + p.session.rest, `${minutes} min plan runs ${total} s`);
-  }
-});
-
-test('recent history: days off, days in a row, twice in a day, a long layoff', () => {
-  const back = RT.planNext([test0(0), sess(1)], T0 + 6 * DAY);
-  assert.ok(back.session.work < back.work && back.session.windows.sprawl > back.windows.sprawl && back.why.some((x) => /Back after 5 days/.test(x)));
-  const streak = RT.planNext([test0(0), sess(1), sess(2), sess(3)], T0 + 4 * DAY);
-  assert.ok(streak.session.cap < streak.cap && streak.why.some((x) => /Day 5 in a row/.test(x)), streak.why.join(' | ')); // the test day counts too
-  const twice = RT.planNext([test0(0), sess(1)], T0 + DAY + 3600e3);
-  assert.ok(twice.session.cap <= twice.cap / 2 + 1 && twice.why.some((x) => /Second session today/.test(x)));
-  const layoff = RT.planNext([test0(0), sess(1)], T0 + 25 * DAY);
-  assert.equal(layoff.kind, 'retest');
-  // today's adjustments never carry into the plan the next session builds on
-  assert.equal(back.work, 45);
-});
-
 test('goal progress toward 15 minutes at Hard pace', () => {
-  const g = RT.goalProgress(60, 45, { sprawl: 1.25, block: 1.25, shot: 1.25, snap: 1.25, level: 1.25, circle: 1.25 });
-  assert.equal(g.work, 0.5); assert.ok(Math.abs(g.rest - 30 / 45) < 1e-9); assert.ok(Math.abs(g.reads - 0.76) < 0.01);
+  const st = RT.state([], T0), g = RT.goalProgress(st);
+  assert.equal(g.stance, 0.25); assert.ok(Math.abs(g.reads - 0.76) < 0.01); assert.equal(g.explosive, 0.4);
   assert.ok(/Goal 15 min at Hard pace/.test(g.text));
 });
 

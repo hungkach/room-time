@@ -126,6 +126,7 @@ try {
 
   // the touch game still works, now in 3D
   await page.click('#labBack');
+  await page.click('#segTrain button[data-v="0"]');   // the touch game is in Free play
   await page.click('#autoBtn'); await page.waitForTimeout(1500);
   check(await page.textContent('#phaseName') === 'Warm-in', 'touch auto-play still starts');
   await page.waitForFunction(() => globalThis.RoomTime3D && RoomTime3D.ok, null, { timeout: 30000 }).catch(() => {});
@@ -140,8 +141,11 @@ try {
     const c = RoomTimeLab.L.cal; delete c.floor; c.fullAt = new Date(Date.now() - 20 * 864e5).toISOString();
     localStorage.setItem('roomtime.cal', JSON.stringify(c)); localStorage.removeItem('roomtime.history');
   });
-  check(/baseline test/.test(await page.textContent('#trainSum')), 'Train me with no history plans a baseline test: ' + await page.textContent('#trainSum'));
+  await page.click('#segTrain button[data-v="1"]');
+  check(/^Today: First session · \d+ rounds in 15 min/.test(await page.textContent('#trainSum')), 'Train me with no history: a first session at your length, no test: ' + await page.textContent('#trainSum'));
+  check(await page.isHidden('#segPace') && await page.isHidden('#startBtn'), 'Train me hides the pace and the touch session');
   await page.click('#segTrain button[data-v="0"]');
+  check(await page.isVisible('#segPace') && await page.isVisible('#startBtn'), 'Free play shows them');
   await page.click('#camPlayBtn');
   await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
   check(await page.evaluate(() => RoomTimeGame.S.mode) === 'calib', 'camera play opens with the warm-up calibration');
@@ -175,34 +179,30 @@ try {
   let hist = await page.evaluate(() => JSON.parse(localStorage.getItem('roomtime.history') || '[]'));
   check(hist.length === 1 && hist[0].mode === 'free' && hist[0].partial, 'a free play session that ended early is saved, marked partial');
 
-  // Train me: a recent full calibration from this camera means a quick check (standing and the floor), then the baseline test
+  // Train me: a recent full calibration from this camera means a quick check (standing and the floor), then the session
   await page.click('#segTrain button[data-v="1"]');
   await page.click('#camPlayBtn');
   await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
   const quick = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
   check(quick.join() === 'Standing', 'a recent calibration: the quick check is standing, then the shuffle: ' + quick.join(', '));
-  check(await page.textContent('#phaseName') === 'Stance hold' && await page.evaluate(() => RoomTimeGame.S.prog.kind) === 'baseline', 'the baseline test starts with the stance hold');
-  // (in game time, which runs slow here: hold 4 s, then stand up)
+  const cv = await page.evaluate(() => RoomTimeGame.S.calibView);
+  check(cv && cv.steps.map((x) => x.name + ':' + x.state).join() === 'Standing:done,Floor:done' && cv.sweep.left < -0.8 && cv.sweep.right > 0.8,
+    'the warm-up shows each part register: ' + (cv && cv.steps.map((x) => x.name + ':' + x.state).join()) + `, edges ${cv && cv.sweep.left.toFixed(2)} and ${cv && cv.sweep.right.toFixed(2)}`);
+  const prog = await page.evaluate(() => ({ day: RoomTimeGame.S.prog.day, n: RoomTimeGame.S.plan.length, minutes: RoomTimeGame.S.prog.rounds.reduce((a, r) => a + r.work + r.rest, 0) / 60 }));
+  check(await page.textContent('#phaseName') === 'Warm-in' && prog.day === 'technique' && Math.abs(prog.minutes - 15) < 0.5,
+    `Train me after this morning's free play is a technique day of ${prog.minutes.toFixed(1)} min, ${prog.n} rounds, warm-in first`);
+  // play a few rounds, then skip through the rest (game time runs slow at 2 fps here)
   await pose(POSE['Square stance']);
-  await page.waitForFunction(() => RoomTimeGame.S.hold.t > 4, null, { timeout: 120000 });
-  await pose(POSE.Standing);
-  await page.waitForFunction(() => RoomTimeGame.S.mode === 'rest', null, { timeout: 120000 }).catch(() => {});
-  const held = await page.evaluate(() => RoomTimeGame.S.rounds[0] && RoomTimeGame.S.rounds[0].holdS);
-  check(held > 3.5 && held < 7, `the hold ends when you stand up: held ${held && held.toFixed(1)} s`);
-  await pose(POSE['Square stance']);
-  await page.click('#skipBtn');
-  await page.waitForFunction(() => RoomTimeGame.S.mode === 'work' && RoomTimeGame.S.r === 1, null, { timeout: 15000 });
-  check(await page.textContent('#phaseName') === 'Reaction test', 'then the reaction test');
   await page.waitForFunction(() => RoomTimeGame.S.trials.length >= 1, null, { timeout: 120000 }).catch(() => {});
-  await page.click('#skipBtn'); await page.waitForTimeout(500); await page.click('#skipBtn');
-  await page.waitForFunction(() => RoomTimeGame.S && RoomTimeGame.S.mode === 'done', null, { timeout: 15000 });
+  for (let i = 0; i < 40 && await page.evaluate(() => RoomTimeGame.S && RoomTimeGame.S.mode !== 'done'); i++) { await page.click('#skipBtn'); await page.waitForTimeout(250); }
   hist = await page.evaluate(() => JSON.parse(localStorage.getItem('roomtime.history') || '[]'));
   const b = hist[1] || {};
-  check(hist.length === 2 && b.kind === 'baseline' && !b.partial && Math.abs(b.holdS - held) < 0.01 && b.trials.length > 0,
-    `the baseline is saved: hold ${b.holdS && b.holdS.toFixed(1)} s, ${b.trials && b.trials.length} calls`);
+  check(hist.length === 2 && b.kind === 'session' && b.day === 'technique' && !b.partial && b.rounds.length === prog.n && b.rounds.every((r) => typeof r.work === 'number') && b.load > 0,
+    `the session is saved round by round: ${b.rounds && b.rounds.length} rounds, load ${b.load}, ${b.trials && b.trials.length} calls`);
   check(/Saved/.test(await page.textContent('#debriefIn')) && /Next session/.test(await page.textContent('#debriefIn')), 'the debrief shows the saved numbers and the next session');
   await page.click('#menuBtn'); await page.waitForTimeout(300);
-  check(/^Next camera session ·/.test(await page.textContent('#trainSum')), 'after the baseline, Train me plans a session: ' + await page.textContent('#trainSum'));
+  check(/^Today: Technique day/.test(await page.textContent('#trainSum')) && /Session 3 today/.test(await page.textContent('#trainWhy')), 'a third session today is planned around the first two: ' + await page.textContent('#trainSum'));
+  check(/^Your numbers · stance capacity/.test(await page.textContent('#trainNums')), 'your numbers: ' + await page.textContent('#trainNums'));
   check(/Level: Novice/.test(await page.textContent('#trainLevel')), 'level: ' + await page.textContent('#trainLevel'));
   const csv = await page.evaluate(() => RoomTime.toCSV(JSON.parse(localStorage.getItem('roomtime.history'))).trim().split('\n'));
   check(csv.length === 3 && /^date,mode,kind/.test(csv[0]), 'the CSV has a row per session');
