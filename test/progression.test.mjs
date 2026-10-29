@@ -140,3 +140,16 @@ test('levels: the highest one 2 of your last 5 sessions meet, and what the next 
   assert.equal(RT.levelOf([sess(1, elite), sess(2, elite)]).name, 'D1 All-American');
   assert.equal(RT.LEVELS.map((l) => l.name).join(), 'Novice,Beginner,HS JV,HS varsity,College D3,College D2,College D1,D1 qualifier,D1 All-American');
 });
+
+test('backup and restore: sessions merge once each, oldest first, and the newer calibration wins', () => {
+  const old = { at: at(-10), stand: {} }, newer = { at: at(-1), stand: {} };
+  const b = JSON.parse(JSON.stringify(RT.backupOf([test0(0), sess(2)], newer, T0)));
+  assert.equal(b.format, 'room-time-backup');
+  const r = RT.restoreFrom(b, [sess(2), sess(5)], old);
+  assert.equal(r.history.map((s) => s.date).join(), [at(0), at(2), at(5)].join());
+  assert.equal(r.added, 1);
+  assert.equal(r.cal.at, newer.at);
+  assert.equal(RT.restoreFrom(b, [], { at: at(3) }).cal.at, at(3));
+  assert.equal(RT.restoreFrom(b, [], null).history.length, 2);
+  assert.ok(RT.restoreFrom({ foo: 1 }, [], null).error);
+});

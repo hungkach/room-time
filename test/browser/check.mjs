@@ -206,6 +206,18 @@ try {
   check(/Level: Novice/.test(await page.textContent('#trainLevel')), 'level: ' + await page.textContent('#trainLevel'));
   const csv = await page.evaluate(() => RoomTime.toCSV(JSON.parse(localStorage.getItem('roomtime.history'))).trim().split('\n'));
   check(csv.length === 3 && /^date,mode,kind/.test(csv[0]), 'the CSV has a row per session');
+  // back up, then restore that file plus one session from another device: sessions merge once each
+  await page.click('#histBox summary').catch(() => {});
+  const dl = page.waitForEvent('download', { timeout: 10000 }).catch(() => null);
+  await page.click('#backupBtn');
+  const file = await dl, bak = file ? JSON.parse(readFileSync(await file.path(), 'utf8')) : null;
+  check(bak && bak.format === 'room-time-backup' && bak.history.length === 2 && bak.cal && bak.cal.stand, 'Back up saves every session and the calibration in one file');
+  if (bak) {
+    bak.history.push({ ...bak.history[1], date: '2026-10-20T12:00:00.000Z' });
+    await page.setInputFiles('#restoreIn', { name: 'b.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(bak)) });
+    await page.waitForFunction(() => /Restored/.test(document.getElementById('backupNote').textContent), null, { timeout: 5000 }).catch(() => {});
+    check(/Restored: 1 session added, 3 in all/.test(await page.textContent('#backupNote')), 'Restore merges: ' + await page.textContent('#backupNote'));
+  }
 } finally {
   await browser.close(); server.close();
 }

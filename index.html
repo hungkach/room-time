@@ -234,7 +234,10 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         <summary>History and records</summary>
         <div class="sum" id="histRec"></div>
         <ol class="hist" id="histList"></ol>
+        <div class="actions"><button class="secondary" id="backupBtn">Back up</button><button class="secondary" id="restoreBtn">Restore</button></div>
         <div class="actions"><button class="secondary" id="csvBtn">Export CSV</button><button class="secondary" id="histClear">Clear history</button></div>
+        <input type="file" id="restoreIn" accept=".json,application/json" hidden>
+        <div class="sum" id="backupNote"></div>
       </details>
     </div>
 
@@ -883,6 +886,21 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   };
 
   // One row per session, for Numbers, Sheets or Excel.
+  // A backup file: every saved session and the calibration, to restore on this or another device.
+  RT.backupOf = function(history, cal, now){
+    return {format:'room-time-backup', version:1, at:new Date(now).toISOString(), history:history || [], cal:cal || null};
+  };
+  // Restoring merges: sessions from both, once each (by date), oldest first; the newer calibration.
+  // Returns {history, cal, added} or {error}.
+  RT.restoreFrom = function(backup, history, cal){
+    if (!backup || backup.format !== 'room-time-backup' || !Array.isArray(backup.history)) return {error:'not a Room Time backup file'};
+    const byDate = new Map();
+    for (const s of (history || []).concat(backup.history)) if (s && s.date && !byDate.has(s.date)) byDate.set(s.date, s);
+    const merged = [...byDate.values()].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+    const t = c => c && c.at ? Date.parse(c.at) || 0 : -1;
+    return {history:merged, cal:t(backup.cal) > t(cal) ? backup.cal : cal || null, added:merged.length - (history || []).length};
+  };
+
   RT.toCSV = function(history){
     const moves = RT.PROG.moves;
     const head = ['date', 'mode', 'kind', 'partial', 'rounds', 'work_s', 'rest_s', 'stance_pct', 'hold_s', 'explosive', 'cap', 'score_you', 'score_opp', 'fakes_bit', 'speed_first', 'speed_last'];
@@ -1031,22 +1049,47 @@ function renderTrain(){
       x.onTime != null ? `${Math.round(x.onTime*100)}% on time` : '', x.score ? `live ${x.score.you}–${x.score.opp}` : '', x.partial ? 'ended early' : ''].filter(Boolean);
     return `<li>${esc(when)} · ${what}${bits.length ? ' · ' + esc(bits.join(', ')) : ''}</li>`;
   }).join('');
-  $('csvBtn').disabled = !h.length; $('histClear').disabled = !h.length;
+  $('csvBtn').disabled = !h.length; $('histClear').disabled = !h.length; $('backupBtn').disabled = !h.length && !readCal();
 }
 // The CSV goes through the share sheet where there is one (Files, Numbers, Mail on iPad), else downloads.
-async function exportCSV(){
-  const csv = globalThis.RoomTime.toCSV(loadHistory()), name = `room-time-${new Date().toISOString().slice(0, 10)}.csv`;
+async function shareFile(text, name, type, title){
   try {
-    const file = new File([csv], name, {type:'text/csv'});
-    if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file], title:'Room Time sessions'}); return; }
+    const file = new File([text], name, {type});
+    if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file], title}); return; }
   } catch(e) { if (e && e.name === 'AbortError') return; }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'})); a.download = name;
+  a.href = URL.createObjectURL(new Blob([text], {type})); a.download = name;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
+const day = () => new Date().toISOString().slice(0, 10);
+function exportCSV(){ return shareFile(globalThis.RoomTime.toCSV(loadHistory()), `room-time-${day()}.csv`, 'text/csv', 'Room Time sessions'); }
 $('csvBtn').addEventListener('click', exportCSV);
+// Back up: every session and the calibration in one file (save it to Files); Restore merges one back in.
+const readCal = () => { try { return JSON.parse(localStorage.getItem('roomtime.cal') || 'null'); } catch(e) { return null; } };
+$('backupBtn').addEventListener('click', () => {
+  const b = globalThis.RoomTime.backupOf(loadHistory(), readCal(), Date.now());
+  shareFile(JSON.stringify(b), `room-time-backup-${day()}.json`, 'application/json', 'Room Time backup');
+});
+$('restoreBtn').addEventListener('click', () => $('restoreIn').click());
+$('restoreIn').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  let res;
+  try { res = globalThis.RoomTime.restoreFrom(JSON.parse(await f.text()), loadHistory(), readCal()); } catch(err) { res = {error:'could not read the file'}; }
+  if (res.error) { $('backupNote').textContent = 'Restore: ' + res.error + '.'; return; }
+  try {
+    localStorage.setItem('roomtime.history', JSON.stringify(res.history));
+    if (res.cal) localStorage.setItem('roomtime.cal', JSON.stringify(res.cal));
+  } catch(err) { $('backupNote').textContent = 'Restore: this device would not save it.'; return; }
+  // the camera tools keep the calibration in memory: reload so they pick up the restored one
+  $('backupNote').textContent = `Restored: ${res.added} session${res.added === 1 ? '' : 's'} added, ${res.history.length} in all.`;
+  setTimeout(() => location.reload(), 1500);
+});
+// Ask the browser to keep this site's storage (Safari may clear it otherwise after weeks unused)
+function persistStorage(){ try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch(e) {} }
+persistStorage();
 $('histClear').addEventListener('click', () => {
-  if (!confirm('Delete every saved session on this device? Export the CSV first if you want to keep them.')) return;
+  if (!confirm('Delete every saved session on this device? Back up first if you want to keep them.')) return;
   try { localStorage.removeItem('roomtime.history'); } catch(e) {}
   renderTrain();
 });
@@ -1272,6 +1315,7 @@ function saveSession(partial){
   };
   const h = loadHistory(); h.push(rec);
   try { localStorage.setItem('roomtime.history', JSON.stringify(h)); } catch(e) {}
+  persistStorage();
   S.savedRec = rec;
   return rec;
 }
