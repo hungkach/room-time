@@ -76,35 +76,63 @@ test('the day: what you did today, this week and lately decides it', () => {
   const h = simulate(RT, weekdays(4)).history;
   const last = Date.parse(h[h.length - 1].date);
   const second = RT.planNext(h, last + 2 * 3600e3, { minutes: 15 });
-  assert.equal(second.day, 'technique'); assert.ok(second.why.some((x) => /Session 2 today/.test(x)), second.why.join(' | '));
+  assert.equal(second.day, 'light'); assert.ok(second.why.some((x) => /Session 2 today/.test(x)), second.why.join(' | '));
   const fresh = RT.planNext(h, last + 2 * DAY, { minutes: 15 });
   assert.ok(['volume', 'pace', 'live'].includes(fresh.day), 'a normal day: ' + fresh.day);
   assert.ok(second.cap < fresh.cap && second.windows.sprawl > fresh.windows.sprawl, 'the second session today is lighter');
   const back = RT.planNext(h, last + 9 * DAY, { minutes: 15 });
-  assert.equal(back.day, 'technique'); assert.ok(back.why.some((x) => /Back after 9 days/.test(x)));
+  assert.equal(back.day, 'light'); assert.ok(back.why.some((x) => /Back after 9 days/.test(x)));
   // a big week: doubles and long sessions push this week's load over your usual
   const big = simulate(RT, [...weekdays(3), ...[21, 21.4, 22, 22.4, 23, 23.4].map((d) => ({ day: Math.floor(d), hour: (d % 1) * 20, minutes: 30 }))]).history;
   const after = RT.planNext(big, T0 + 24 * DAY, { minutes: 15 });
-  assert.equal(after.day, 'technique'); assert.ok(after.state.acwr > RT.PROG.acwrMax, 'acwr ' + after.state.acwr.toFixed(2));
+  assert.equal(after.day, 'light'); assert.ok(after.state.acwr > RT.PROG.acwrMax, 'acwr ' + after.state.acwr.toFixed(2));
 });
 
 test('no plan takes this week over 1.5 times your usual load', () => {
   const { sessions } = simulate(RT, [...weekdays(4), ...Array.from({ length: 10 }, (_, i) => ({ day: 28 + i, minutes: 30 }))]);
   for (const s of sessions.slice(5)) {
-    if (s.plan.day === 'technique') continue;
+    if (s.plan.day === 'light') continue;
     const st = s.state, L = s.plan.rounds.reduce((a, r) => a + r.work / 60 * RT.PROG.loadK[r.phase], 0) + s.plan.cap * RT.PROG.repLoad;
     assert.ok((st.fat6 + L) / st.fit <= RT.PROG.acwrCap + 1e-9, `day ${s.day}: ${((st.fat6 + L) / st.fit).toFixed(2)}`);
   }
 });
 
-test('mid-session: a hard round shortens what is left, a strong one lengthens it, the end time holds', () => {
+test('mid-session: how the round held and how you started it re-tune the rest, the end time holds', () => {
   const up = [{ phase: 'tech', work: 30, rest: 40 }, { phase: 'sit', work: 30, rest: 40 }, { phase: 'live', work: 30, rest: 40, period: 1 }];
   const hard = RT.adaptRound(round('tech', 30, 0.55), up), strong = RT.adaptRound(round('tech', 30, 0.9), up);
   assert.ok(hard.rounds.every((r) => r.work < 30) && strong.rounds.every((r) => r.work > 30));
-  for (const a of [hard, strong]) a.rounds.forEach((r, i) => assert.equal(r.work + r.rest, 70, 'work plus rest unchanged'));
-  assert.ok(RT.adaptRound(round('tech', 30, 0.9), up, 'technique').rounds.every((r) => r.work === 30), 'a technique day never grows');
-  const tight = RT.adaptRound(round('tech', 30, 0.95), [{ phase: 'tech', work: 30, rest: 22 }]).rounds[0];
-  assert.ok(tight.rest >= RT.PROG.restMin, 'rest never under the minimum');
+  // how you started after the rest: strong, rests shorter (the time goes to work); weak, rests longer
+  const fresh = RT.adaptRound(round('tech', 30, 0.76, { rest: 40, startPct: 0.9 }), up), spent = RT.adaptRound(round('tech', 30, 0.76, { rest: 40, startPct: 0.5 }), up);
+  assert.ok(fresh.rounds.every((r) => r.rest < 40) && spent.rounds.every((r) => r.rest > 40), JSON.stringify([fresh.rounds[0], spent.rounds[0]]));
+  for (const a of [hard, strong, fresh, spent]) a.rounds.forEach((r) => assert.equal(r.work + r.rest, 70, 'work plus rest unchanged'));
+  assert.ok(RT.adaptRound(round('tech', 30, 0.9, { rest: 40, startPct: 0.9 }), up, 'light').rounds.every((r) => r.work === 30), 'a light day never grows');
+  const tight = RT.adaptRound(round('tech', 30, 0.95, { rest: 12, startPct: 0.9 }), [{ phase: 'tech', work: 30, rest: 12 }]).rounds[0];
+  assert.ok(tight.rest >= RT.PROG.restMin, 'rest never under the minimum: ' + tight.rest);
+});
+
+test('recovery: learned from how you start each round after a rest', () => {
+  const sess2 = (d, startPct, rest) => sess(d, { rounds: [round('warm', 30, 0.9), ...Array.from({ length: 10 }, (_, i) => round('tech', 40, 0.76, { rest, startPct: i ? startPct : null }))] });
+  const P = RT.PROG;
+  assert.equal(RT.state([], T0).rec, P.rec0);
+  const strong = RT.state([sess2(0, 0.9, 30)], T0 + DAY).rec, weak = RT.state([sess2(0, 0.45, 30)], T0 + DAY).rec, mid = RT.state([sess2(0, 0.7, 30)], T0 + DAY).rec;
+  assert.ok(strong < P.rec0 && strong > 0.6, 'started strong after 30 s per 40 s: ' + strong.toFixed(2));
+  assert.ok(mid < P.rec0 && mid > strong, 'about right at 0.75: ' + mid.toFixed(2));
+  const tight = RT.state([sess2(0, 0.45, 20)], T0 + DAY).rec;
+  assert.ok(Math.abs(tight - P.rec0) < 1e-9, 'weak after a short rest says you need at least 0.63, under the estimate: nothing new');
+  // the plan's rest follows it
+  const p = RT.planNext([sess2(0, 0.9, 30), sess2(2, 0.9, 30), sess2(4, 0.9, 30)], T0 + 6 * DAY);
+  assert.ok(p.rounds[2].rest / p.rounds[1].work < P.rec0, 'rest per second of work under the start');
+});
+
+test('rounds have no fixed ceiling: a big capacity makes fewer, longer rounds, and in the end one block', () => {
+  const st = (cap, rec) => ({ ...RT.state([], T0), cap, rec, n: 3, todayN: 0, acwr: 1, ready: 0, since: { volume: 5, pace: 0, live: 1 }, lastDay: 'pace' });
+  const P = RT.PROG;
+  for (const [cap, rec, minutes] of [[60, 0.5, 15], [300, 0.2, 15], [900, 0.05, 15], [400, 0.1, 30]]) {
+    const r = RT.buildRounds('volume', Math.min(cap, minutes * 60 - 45), Math.max(P.restMin, cap * rec), minutes * 60);
+    const total = r.reduce((a, x) => a + x.work + x.rest, 0);
+    assert.equal(total, minutes * 60, `${cap} s rounds in ${minutes} min: ${total} s`);
+    if (cap >= 900) assert.equal(r.length, 2, 'warm-in, then one block');
+  }
 });
 
 test('the warm-in: today against your own recent warm-ins', () => {
@@ -176,10 +204,15 @@ test('older test sessions still count: the hold and the test reads', () => {
 test('a simulated season: an improving player grows, a flat one holds, the day changes', () => {
   const sched = weekdays(10).map((x, i) => ({ ...x, minutes: i % 5 === 2 ? 30 : 15 }));
   const up = simulate(RT, sched, { cap: 35 }).sessions, flat = simulate(RT, sched, { cap: 35, grow: 0 }).sessions;
-  const work = (ss, a, b) => ss.slice(a, b).filter((s) => s.minutes === 15 && s.plan.day !== 'technique').map((s) => s.plan.work);
+  const work = (ss, a, b) => ss.slice(a, b).filter((s) => s.minutes === 15 && s.plan.day !== 'light').map((s) => s.plan.work);
   const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
   assert.ok(avg(work(up, 40, 50)) > avg(work(up, 0, 10)) + 8, `rounds grow: ${avg(work(up, 0, 10)).toFixed(0)} s to ${avg(work(up, 40, 50)).toFixed(0)} s`);
   assert.ok(Math.abs(avg(work(flat, 40, 50)) - avg(work(flat, 5, 15))) < 8, `a flat player holds: ${avg(work(flat, 5, 15)).toFixed(0)} s, ${avg(work(flat, 40, 50)).toFixed(0)} s`);
+  // rest per second of work falls as the player recovers faster, and the estimate never asks for less than they need
+  const rec = (ss, a, b) => avg(ss.slice(a, b).map((x) => x.state.rec));
+  assert.ok(rec(up, 40, 50) < rec(up, 5, 15) - 0.15, `rest per second of work: ${rec(up, 5, 15).toFixed(2)} to ${rec(up, 40, 50).toFixed(2)}`);
+  assert.ok(Math.abs(rec(flat, 40, 50) - rec(flat, 5, 15)) < 0.15, `flat: ${rec(flat, 5, 15).toFixed(2)}, ${rec(flat, 40, 50).toFixed(2)}`);
+  for (const x of up) assert.ok(x.state.rec >= x.me.rec * 0.9, `day ${x.day}: rest estimate ${x.state.rec.toFixed(2)}, need ${x.me.rec.toFixed(2)}`);
   // the estimate never runs ahead of the player
   for (const s of up) assert.ok(s.state.cap <= s.me.cap * 1.1, `day ${s.day}: estimate ${s.state.cap.toFixed(0)}, player ${s.me.cap.toFixed(0)}`);
   // every week has more than one kind of day, and all of them show up
@@ -209,10 +242,12 @@ test('records and CSV', () => {
   assert.ok(csv[2].includes(',80,') && csv[2].includes(',410'));
 });
 
-test('goal progress toward 15 minutes at Hard pace', () => {
+test('goal: the whole session continuous at a hard pace', () => {
   const st = RT.state([], T0), g = RT.goalProgress(st);
-  assert.equal(g.stance, 0.25); assert.ok(Math.abs(g.reads - 0.76) < 0.01); assert.equal(g.explosive, 0.4);
-  assert.ok(/Goal 15 min at Hard pace/.test(g.text));
+  assert.equal(g.stance, 0, 'at the start'); assert.ok(Math.abs(g.reads - 0.76) < 0.01); assert.equal(g.explosive, 0.4);
+  assert.ok(Math.abs(RT.qualities({ ...st, cap: Math.sqrt(30 * 900) }).stance - 0.5) < 1e-9, 'halfway on a log scale');
+  assert.equal(RT.qualities({ ...st, cap: 900 }).stance, 1);
+  assert.ok(/Goal: 15 min continuous at 0\.95 s reads/.test(g.text), g.text);
 });
 
 test('levels: the highest one 2 of your last 5 sessions meet, and what the next one needs', () => {

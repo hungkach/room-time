@@ -261,7 +261,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
       <div><b>Camera play:</b> prop the device sideways at hip height about 6 ft away (on an iPad, Center Stage off in Control Center). It calibrates you first: three holds, then shuffle to your left until it beeps or you reach your wall, pause, then all the way to your right and pause. After that, for two weeks on the same camera, it's a quick check: stand, then the shuffle. With the back camera the screen faces away, so it all runs by sound.</div>
-      <div><b>Train me:</b> every session is planned fresh for the length you pick, from every saved session, recent ones counting most. It keeps three numbers on you: how long a round you can hold your stance through, how fast you read each move, and how many shots and sprawls you can do before they slow down. With this week's load against your usual, they set the day (technique, volume, pace or live), the rounds and the rest; then each round re-tunes the rounds after it. A second session the same day, a big week or time off makes for a lighter day. Sessions save on this device only (no video, only numbers); back them up or export a CSV from History.</div>
+      <div><b>Train me:</b> the goal is the whole session continuous at a hard pace, stance held. Every session is planned fresh for the length you pick, from every saved session, recent ones counting most. It keeps four numbers on you: how long a round you can hold your stance through, how much rest you need (from how you start each round after a rest), how fast you read each move, and how many shots and sprawls you can do before they slow down. With this week's load against your usual, they set the day (volume, pace, live, or a light day after a double, a big week or time off), the rounds and the rest. The warm-in checks how you're moving today, and each round re-tunes the rounds after it. As you get fitter, rounds get longer and rests shorter, until it's one block. Sessions save on this device only (no video, only numbers); back them up or export a CSV from History.</div>
       <div><b>Block:</b> a down block, hands to his head and shoulders, hips back, feet planted. It stops a shot from range for little effort; a deep shot runs through it and needs the sprawl.</div>
       <div><b>Sprawl, shot, snap:</b> your big moves. Each round, the coach calls them and the drill partner shows the look.</div>
       <div><b>Live go reads:</b></div>
@@ -702,17 +702,22 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   // ---------- Train me: the adaptive plan ----------
   // Every session is planned fresh from everything saved (RT.planNext), and every round re-tunes the next one in the
   // game (RT.adaptRound). No fixed ladder and no test day. Pure and deterministic.
-  // Three running estimates of you, every observation weighted by how recent it is (half-life capHalfLife days),
-  // drifting back toward the starting values over a long layoff (layoffDays):
-  //   capacity: the work bout (s) you can keep in your stance about stanceAt of the time, from every round
+  // The goal (Mark, 10/29, for practice, not competition): the whole session continuous at a hard pace, stance held.
+  // Round and rest lengths are not set by any match format; they come from four running estimates of you, every
+  // reading weighted by how recent it is (half-life capHalfLife days), drifting back toward the starting values over a
+  // long layoff:
+  //   capacity: the round (s) you can keep in your stance about stanceAt of the time, from every round
+  //   recovery: the rest you need per second of work, from how you start each round after a rest
   //   reads: a window per move, from the live staircase (every drill call steps it)
   //   explosive tolerance: shots and sprawls before their speed fades to speedFade of your first ones
-  // And fitness and fatigue as weekly training load: fatigue the last 7 days, fitness the last six weeks or so weighted
-  // e^(-days/fitDays). Their ratio (acute:chronic) sets the day: fresh under 1, a technique day over acwrMax, and no
-  // plan takes it over acwrCap.
+  // As capacity grows rounds get longer, as recovery improves rests get shorter (down to restMin), so the session
+  // becomes fewer, longer rounds and in the end one block. Fitness and fatigue as weekly training load (fatigue the
+  // last 7 days, fitness the weeks before weighted e^(-days/fitDays)) set how fresh you are: a light day over acwrMax,
+  // and no plan takes it over acwrCap.
   // Record: {date, mode: 'train' | 'free', kind: 'session' | 'free' (older: 'baseline' | 'retest'), day, partial,
   //   minutes, work, rest, cap, readWindow (mean window faced, s), onTime (share of calls and reads made),
-  //   rounds: [{phase, work (s worked), stancePct, breakT (s in when the stance first broke, or null), hold (s)}],
+  //   rounds: [{phase, work (s worked), plan (s planned), rest (s before it), stancePct, startPct (in stance over its
+  //   first startS), breakT (s in when the stance first broke, or null), hold (s)}], warm, readiness,
   //   stancePct, holdS, moves: {move: {n, hitRate, rtMed}}, trials: [{m, h, rt, w}], speed: {first, last},
   //   explosive, explosiveTol, load, score: {you, opp}, fakesBit}
   RT.PROG = {
@@ -721,24 +726,29 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     // a miss lengthens it 9%, which settles where you make about 74% (hit share p where p ln 0.97 + (1 - p) ln 1.09 = 0)
     window0:1.25, wMin:0.45, wMax:2.0, hitStep:0.97, missStep:1.09,
     // fitness and fatigue (weekly load, weighted e^(-days/42) and e^(-days/7)); usual0: the weekly load counted as
-    // usual before you've built one (about four plain sessions; trusted fully for trustDays); acwrMax: fatigue over fitness that makes it a technique day
+    // usual before you've built one (about four plain sessions; trusted fully for trustDays); acwrMax: fatigue over fitness that makes it a light day
     fitDays:42, fatDays:7, usual0:40, trustDays:28, acwrMax:1.4, acwrCap:1.5, capHalfLife:21, layoffFrom:7, layoffDays:90, layoffMax:0.75,
-    stanceAt:0.75, cap0:30, capMin:20, capMax:150, capPrior:4, tol0:16, tolMin:6, tolMax:40, tolPrior:2, speedFade:0.8,
-    restMin:20, restMax:90, liveMax:120, holdEvery:28, holdAfter:4, holdCap:180, breakS:2, breakRoundS:3, totalS:15*60,
+    stanceAt:0.75, cap0:30, capMin:20, capMax:1800, capPrior:4, tol0:16, tolMin:6, tolMax:40, tolPrior:2, speedFade:0.8,
+    // recovery: rest per second of work. A strong start after a rest (startGood in stance over the first startS) says
+    // the rest was more than enough, a weak one (under startWeak) that it was too short.
+    rec0:1.2, recMin:0.05, recMax:3, recPrior:4, startS:20, startGood:0.8, startWeak:0.6,
+    restMin:10, restMax:120, holdEvery:28, holdAfter:4, holdCap:300, breakS:2, breakRoundS:3, totalS:15*60,
     // load per minute of work by round type, and per shot or sprawl
     loadK:{warm:0.5, tech:0.8, react:0.8, hold:1.0, sit:1.0, live:1.3}, repLoad:0.2
   };
-  // Mark's goal (10/27): 15 minutes at Hard pace, 2:00 rounds with 0:30 rest and the Hard preset's 0.95 s reads.
-  RT.GOAL = {minutes:15, work:120, rest:30, window:0.95, tol:40};
-  // Day types: what each trains, and how it shapes the rounds. work: of your capacity; rest: of the round's work;
+  // Mark's goal (10/29): 15 minutes continuous (work 900 s, no rest) at the Hard preset's 0.95 s reads, stance held.
+  RT.GOAL = {minutes:15, work:900, window:0.95, tol:40};
+  // Day types: what each trains, and how it shapes the rounds. work: of your capacity; rest: of your recovery;
   // tol: of your explosive tolerance; ease: on your read windows; mix: share of technique, situations and live rounds.
   RT.DAYS = {
-    start:     {name:'First session', work:1.0,  rest:1.5, tol:0.8,  ease:1.1,  mix:[0.5, 0.3, 0.2]},
-    technique: {name:'Technique day', work:0.8,  rest:1.6, tol:0.5,  ease:1.15, mix:[0.6, 0.3, 0.1], light:true},
-    volume:    {name:'Volume day',    work:1.1,  rest:1.0, tol:0.8,  ease:1.1,  mix:[0.4, 0.4, 0.2], trains:'stance'},
-    pace:      {name:'Pace day',      work:0.7,  rest:0.8, tol:1.1,  ease:0.97, mix:[0.3, 0.5, 0.2], trains:'reads'},
-    live:      {name:'Live day',      work:1.0,  rest:1.0, tol:1.3,  ease:1.0,  mix:[0.2, 0.3, 0.5], trains:'explosive'}
+    start:  {name:'First session', work:1.0, rest:1.0, tol:0.8,  ease:1.1,  mix:[0.5, 0.3, 0.2]},
+    light:  {name:'Light day',     work:0.8, rest:1.4, tol:0.5,  ease:1.15, mix:[0.6, 0.3, 0.1], light:true},
+    volume: {name:'Volume day',    work:1.1, rest:1.0, tol:0.8,  ease:1.1,  mix:[0.4, 0.4, 0.2], trains:'stance'},
+    pace:   {name:'Pace day',      work:0.7, rest:0.8, tol:1.1,  ease:0.97, mix:[0.3, 0.5, 0.2], trains:'reads'},
+    live:   {name:'Live day',      work:1.0, rest:1.0, tol:1.3,  ease:1.0,  mix:[0.2, 0.3, 0.5], trains:'explosive'}
   };
+  // older sessions called the light day a technique day
+  const dayOf = s => s && (s.day === 'technique' ? 'light' : s.day);
   // Levels, each a session you can complete: its length, stance held, the reaction window you faced, the share of
   // calls you made, and your median sprawl reaction. The labels are estimates of where that pace sits (high school
   // to NCAA), set by Mark's coaching sense and the research found so far; tagged match video will anchor them later.
@@ -877,7 +887,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       const est = () => (sv + prior*v0)/(sw + prior);
       for (const p of pts) {
         if (tPrev != null && p.t > tPrev) { const f = Math.pow(0.5, (p.t - tPrev)/(P.capHalfLife*DAY)); sw *= f; sv *= f; }
-        tPrev = p.t; if (p.atLeast && p.v <= est()) continue; sw += 1; sv += p.v;
+        tPrev = p.t; if ((p.atLeast && p.v <= est()) || (p.atMost && p.v >= est())) continue; sw += 1; sv += p.v;
       }
       if (tPrev != null) { const f = Math.pow(0.5, Math.max(0, now - tPrev)/(P.capHalfLife*DAY)); sw *= f; sv *= f; }
       const e = est();
@@ -891,10 +901,27 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       const legacy = !rs.length && num(s.work) && num(s.stancePct) ? [{phase:'tech', work:s.work, stancePct:s.stancePct}] : [];
       for (const r of rs.concat(legacy)) {
         const v = RT.capacityObs(r);
-        if (v != null) capPts.push({t, v, atLeast:r.phase !== 'hold' && Math.pow(r.stancePct/P.stanceAt, 2) >= 1.25});
+        // an easy round, or a hold that ran its whole planned time, only says "at least"
+        const unbroken = r.phase === 'hold' && num(r.plan) && num(r.hold) && r.hold >= r.plan - 1;
+        if (v != null) capPts.push({t, v, atLeast:unbroken || (r.phase !== 'hold' && Math.pow(r.stancePct/P.stanceAt, 2) >= 1.25)});
       }
     }
     const cap = running(capPts, P.cap0, P.capPrior);
+    // recovery: from each round after a rest, the rest over the work before it, and how you started
+    const recPts = [];
+    for (const s of done) {
+      const t = Date.parse(s.date), rs = s.rounds || [];
+      for (let i = 1; i < rs.length; i++) {
+        const r = rs[i], prev = rs[i - 1];
+        if (r.phase === 'warm' || r.phase === 'hold' || prev.phase === 'warm' || prev.phase === 'hold') continue;
+        if (!num(r.rest) || r.rest <= 0 || !num(prev.work) || prev.work < 10 || !num(r.startPct)) continue;
+        const ratio = r.rest/prev.work;
+        if (r.startPct >= P.startGood) recPts.push({t, v:ratio*0.9, atMost:true});
+        else if (r.startPct < P.startWeak) recPts.push({t, v:ratio*1.25, atLeast:true});
+        else recPts.push({t, v:ratio});
+      }
+    }
+    const rec = clampN(running(recPts, P.rec0, P.recPrior), P.recMin, P.recMax);
     const tol = running(done.filter(s => num(s.explosiveTol)).map(s => ({t:Date.parse(s.date), v:s.explosiveTol, atLeast:!!s.tolOpen})), P.tol0, P.tolPrior);
     // reads: the staircase over every call, then the layoff drift
     const trials = done.flatMap(s => s.trials || []);
@@ -908,43 +935,47 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     const lastHold = done.filter(s => (s.rounds || []).some(r => r.phase === 'hold') || num(s.holdS)).pop();
     // sessions since each day type was last done
     const since = {};
-    for (const d of Object.keys(RT.DAYS)) { const i = done.map(x => x.day).lastIndexOf(d); since[d] = i < 0 ? done.length : done.length - 1 - i; }
-    return {n:done.length, last, daysOff, since, fit:fitEff, fat, fat6, acwr, ready, cap, tol, windows, trials, week, todayN:todays.length,
-      todayLoad:todays.reduce((a, s) => a + RT.loadOf(s), 0), lastDay:last && last.day, prevDay:done.length > 1 ? done[done.length - 2].day : null,
+    for (const d of Object.keys(RT.DAYS)) { const i = done.map(dayOf).lastIndexOf(d); since[d] = i < 0 ? done.length : done.length - 1 - i; }
+    // the longest round you held (stance at stanceAt or better), recently
+    const held = done.flatMap(s => (s.rounds || []).filter(r => r.phase !== 'warm' && r.phase !== 'hold' && num(r.work) && r.work >= 10 && num(r.stancePct) && r.stancePct >= P.stanceAt).map(r => r.work));
+    return {n:done.length, last, daysOff, since, fit:fitEff, fat, fat6, acwr, ready, cap, rec, tol, windows, trials, week, todayN:todays.length,
+      longest:held.length ? Math.max(...held) : null,
+      todayLoad:todays.reduce((a, s) => a + RT.loadOf(s), 0), lastDay:dayOf(last), prevDay:done.length > 1 ? dayOf(done[done.length - 2]) : null,
       holdAgo:lastHold ? days(lastHold) : null};
   };
 
   // How far each quality is from the goal, 0 to 1.
   RT.qualities = function(st){
     const P = RT.PROG, G = RT.GOAL, w = P.moves.map(m => st.windows[m]), mw = w.reduce((a, b) => a + b, 0)/w.length;
-    return {stance:Math.min(1, st.cap/G.work), reads:Math.min(1, G.window/mw), explosive:Math.min(1, st.tol/G.tol), readWindow:mw};
+    // stance on a log scale from the start (30 s) to the whole session continuous: doubling counts the same anywhere
+    const stance = clampN(Math.log(st.cap/P.cap0)/Math.log(G.work/P.cap0), 0, 1);
+    return {stance, reads:Math.min(1, G.window/mw), explosive:Math.min(1, st.tol/G.tol), readWindow:mw};
   };
 
   // Rounds that fill the minutes: the warm-in, then technique, situations and live by the day's mix; each round
-  // carries its own work and the rest before it.
-  RT.buildRounds = function(day, work, rest, totalS, liveWork){
+  // carries its own work and the rest before it. The minutes are filled by scaling work and rest together, so their
+  // balance (your recovery) holds. One or two long rounds: situations, then live.
+  RT.buildRounds = function(day, work, rest, totalS){
     const D = RT.DAYS[day], P = RT.PROG;
-    const warmW = Math.min(work, 45);
-    const make = n => {
-      const live = Math.max(1, Math.round(n*D.mix[2])), sit = Math.max(1, Math.round(n*D.mix[1])), tech = Math.max(1, n - live - sit);
-      const r = [{phase:'warm', k:0, of:1, work:warmW, rest:0}];
-      for (let i = 0; i < tech; i++) r.push({phase:'tech', k:i, of:tech, work, rest});
-      for (let i = 0; i < sit; i++) r.push({phase:'sit', k:i, of:sit, work, rest});
-      // live goes of up to three periods, a shorter break between periods
-      const goes = Math.ceil(live/3);
-      for (let g = 0, k = 0; g < goes; g++) {
-        const periods = Math.min(3, live - k);
-        for (let p = 1; p <= periods; p++, k++) r.push({phase:'live', go:g, goCount:goes, period:p, periods, work:liveWork, rest:p === 1 ? rest : Math.min(rest, 30)});
-      }
-      // fill the minutes exactly: the leftover goes into the rests
-      const used = r.reduce((a, x) => a + x.work + x.rest, 0), extra = totalS - used, gaps = r.length - 1;
-      for (let i = 1; i < r.length; i++) r[i].rest = Math.round(clampN(r[i].rest + extra/gaps, P.restMin*0.75, P.restMax*1.5));
-      return r;
-    };
-    const total = r => r.reduce((a, x) => a + x.work + x.rest, 0);
-    let n = Math.max(2, Math.round((totalS - warmW + rest)/(work + rest))), r = make(n);
-    while (n > 2 && total(r) > totalS + 15) r = make(--n);
-    while (total(r) < totalS - (work + rest)) { const t = make(n + 1); if (total(t) > totalS + 15) break; r = t; n++; }
+    const warmW = Math.min(work, 45), avail = totalS - warmW;
+    const n = Math.max(1, Math.round(avail/(work + rest)));
+    const f = avail/(n*(work + rest)), w = Math.max(1, Math.round(work*f)), rr = Math.round(rest*f);
+    let live, sit, tech;
+    if (n === 1) { live = 0; sit = 1; tech = 0; }
+    else if (n === 2) { live = 1; sit = 1; tech = 0; }
+    else { live = Math.max(1, Math.round(n*D.mix[2])); sit = Math.max(1, Math.round(n*D.mix[1])); tech = Math.max(1, n - live - sit); if (tech + sit + live > n) sit = Math.max(1, n - tech - live); }
+    const r = [{phase:'warm', k:0, of:1, work:warmW, rest:0}];
+    for (let i = 0; i < tech; i++) r.push({phase:'tech', k:i, of:tech, work:w, rest:rr});
+    for (let i = 0; i < sit; i++) r.push({phase:'sit', k:i, of:sit, work:w, rest:rr});
+    // live goes of up to three periods
+    const goes = Math.ceil(live/3);
+    for (let g = 0, k = 0; g < goes; g++) {
+      const periods = Math.min(3, live - k);
+      for (let p = 1; p <= periods; p++, k++) r.push({phase:'live', go:g, goCount:goes, period:p, periods, work:w, rest:rr});
+    }
+    // rounding: the last round takes up the last few seconds
+    const used = r.reduce((a, x) => a + x.work + x.rest, 0);
+    r[r.length - 1].work = Math.max(1, r[r.length - 1].work + totalS - used);
     return r;
   };
 
@@ -955,18 +986,16 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     // the day type
     let day;
     if (!st.n) { day = 'start'; why.push('First session: rounds start short and every round tunes the next one.'); }
-    else if (st.todayN) { day = 'technique'; why.push(`Session ${st.todayN + 1} today: technique day, built around what you already did.`); }
-    else if (st.acwr > P.acwrMax) { day = 'technique'; why.push(`This week's load is ${st.acwr.toFixed(1)} times your usual (${st.week} sessions in 7 days): technique day.`); }
-    else if (st.daysOff >= 5) { day = 'technique'; why.push(`Back after ${Math.floor(st.daysOff)} days: technique day to start back.`); }
+    else if (st.todayN) { day = 'light'; why.push(`Session ${st.todayN + 1} today: light day, built around what you already did.`); }
+    else if (st.acwr > P.acwrMax) { day = 'light'; why.push(`This week's load is ${st.acwr.toFixed(1)} times your usual (${st.week} sessions in 7 days): light day.`); }
+    else if (st.daysOff >= 5) { day = 'light'; why.push(`Back after ${Math.floor(st.daysOff)} days: light day to start back.`); }
     else {
-      // the quality furthest from the goal, not the same day twice in a row, and every type now and then
-      const score = d => {
-        const t = RT.DAYS[d].trains, gap = 1 - q[t];
-        return gap - (st.lastDay === d ? 0.25 : 0) - (st.prevDay === d ? 0.1 : 0) + Math.min(0.6, 0.08*st.since[d]);
-      };
+      // each type in proportion to how far its quality is from the goal: the further, the more often; never the same
+      // twice running
+      const score = d => (1 - q[RT.DAYS[d].trains] + 0.2)*(st.since[d] + 1)*(st.lastDay === d ? 0 : 1);
       day = ['volume', 'pace', 'live'].reduce((a, b) => score(b) > score(a) + 1e-9 ? b : a);
       const t = RT.DAYS[day].trains;
-      why.push(`${RT.DAYS[day].name}: ${t === 'stance' ? `stance capacity ${fmtS(st.cap)} of the ${fmtS(RT.GOAL.work)} goal`
+      why.push(`${RT.DAYS[day].name}: ${t === 'stance' ? `rounds of ${fmtS(st.cap)} held, toward ${fmtS(RT.GOAL.work)} continuous`
         : t === 'reads' ? `reads at ${q.readWindow.toFixed(2)} s against the ${RT.GOAL.window.toFixed(2)} s goal`
         : `explosive tolerance ${Math.round(st.tol)} of ${RT.GOAL.tol} reps`}.`);
     }
@@ -974,27 +1003,28 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     // rounds: your capacity shaped by the day and how fresh you are; rest by the day, more when tired, and a little
     // more in a long session so it can't turn into double the load
     const longK = minutes > 20 ? 1 + 0.15*Math.min(1, (minutes - 20)/10) : 1;
-    let work = Math.round(clampN(st.cap*D.work*(1 + 0.1*r), P.capMin, P.capMax)/5)*5;
-    let rest = Math.round(clampN(work*D.rest*(1 - 0.2*r)*longK, P.restMin, P.restMax)/5)*5;
+    const restOf = (w, k) => Math.round(clampN(w*st.rec*k*(1 - 0.2*r)*longK, P.restMin, P.restMax));
+    let work = Math.round(clampN(st.cap*D.work*(1 + 0.1*r), P.capMin, totalS - 45)/5)*5;
+    let rest = restOf(work, D.rest);
     let cap = Math.round(clampN(st.tol*D.tol*(1 + 0.2*r)*Math.sqrt(minutes/15), P.tolMin, P.tolMax));
     let ease = D.ease*(st.todayN ? 1.1 : 1);
     if (st.todayN) cap = Math.max(P.tolMin, Math.round(cap*0.6));
     if (st.n && st.daysOff != null && st.daysOff >= 14) why.push(`${Math.floor(st.daysOff)} days off: your numbers have drifted back toward the start.`);
     // a stance-hold check in a normal session about every 4 weeks (from the 4th session), in place of a technique
     // round; the rest of the session gives back its extra time
-    let holdW = st.n >= P.holdAfter && !st.todayN && (st.holdAgo == null || st.holdAgo >= P.holdEvery) && day !== 'technique'
+    let holdW = st.n >= P.holdAfter && !st.todayN && (st.holdAgo == null || st.holdAgo >= P.holdEvery) && day !== 'light'
       ? Math.min(P.holdCap, Math.round(st.cap*2.5)) : 0;
     const build = () => {
-      const r = RT.buildRounds(day, work, rest, totalS - (holdW ? holdW - work : 0), Math.min(work, P.liveMax));
+      const r = RT.buildRounds(day, work, rest, totalS - (holdW ? holdW - work : 0));
       const i = holdW ? r.findIndex(x => x.phase === 'tech') : -1;
       if (i > 0) r[i] = {phase:'hold', work:holdW, rest:r[i].rest};
       return r;
     };
     let rounds = build();
     if (holdW) why.push('A stance hold in round ' + (rounds.findIndex(x => x.phase === 'hold') + 1) + ': how long you can hold it all out.');
-    // the fatigue check: today's load must keep the acute:chronic ratio in range (a technique day is already the
-    // light option, so it runs as planned)
-    if (day !== 'technique') {
+    // the fatigue check: today's load must keep the acute:chronic ratio in range (a light day already is the light
+    // option, so it runs as planned)
+    if (day !== 'light') {
       const ratio = L => (st.fat6 + L)/st.fit;
       // longer rests first (fewer rounds in the same minutes), then fewer explosive reps, then shorter rounds
       for (let i = 0; i < 6 && ratio(planLoad(rounds, cap)) > P.acwrCap; i++) {
@@ -1005,11 +1035,11 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         if (i === 0) why.push(`Kept under ${P.acwrCap} times your usual weekly load: longer rests.`);
       }
       if (ratio(planLoad(rounds, cap)) > P.acwrCap) {
-        day = 'technique'; holdW = 0; const T = RT.DAYS.technique; ease = T.ease;
-        work = Math.round(clampN(st.cap*T.work, P.capMin, P.capMax)/5)*5;
-        rest = Math.round(clampN(work*T.rest*longK, P.restMin, P.restMax)/5)*5;
+        day = 'light'; holdW = 0; const T = RT.DAYS.light; ease = T.ease;
+        work = Math.round(clampN(st.cap*T.work, P.capMin, totalS - 45)/5)*5;
+        rest = restOf(work, T.rest);
         cap = Math.max(P.tolMin, Math.round(st.tol*T.tol));
-        rounds = build(); why.splice(0, why.length, `This week's load is already near ${P.acwrCap} times your usual: technique day.`);
+        rounds = build(); why.splice(0, why.length, `This week's load is already near ${P.acwrCap} times your usual: light day.`);
       }
     }
     const windows = {};
@@ -1026,7 +1056,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     const G = RT.GOAL;
     q = q || RT.qualities(st);
     return {stance:q.stance, reads:q.reads, explosive:q.explosive, readWindow:q.readWindow,
-      text:`Goal ${G.minutes} min at Hard pace: stance capacity ${fmtS(st.cap)} of ${fmtS(G.work)}, reads ${q.readWindow.toFixed(2)} s of ${G.window.toFixed(2)} s, explosive ${Math.round(st.tol)} of ${G.tol} reps.`};
+      text:`Goal: ${G.minutes} min continuous at ${G.window.toFixed(2)} s reads. Now: rounds of ${fmtS(st.cap)} held, ${Math.round(st.rec*60)} s rest per minute of work, reads ${q.readWindow.toFixed(2)} s, explosive ${Math.round(st.tol)} of ${G.tol} reps.`};
   };
 
   // Today's warm-in against your recent ones: how much of it you held your stance, how fast you read the calls, and
@@ -1060,29 +1090,34 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     const P = RT.PROG;
     return upcoming.map(x => {
       if (x.phase === 'warm' || x.phase === 'hold' || !num(x.work)) return x;
-      const restMin = x.phase === 'live' && x.period > 1 ? 15 : P.restMin;
-      const max = Math.min(x.phase === 'live' ? P.liveMax : P.capMax, x.work + Math.max(0, (x.rest || 0) - restMin));
-      const w = Math.min(max, Math.round(clampN(x.work*k, P.capMin, max)/5)*5);
+      const max = Math.min(P.capMax, x.work + Math.max(0, (x.rest || 0) - P.restMin));
+      const w = Math.min(max, Math.round(clampN(x.work*k, Math.min(P.capMin, x.work), max)/5)*5);
       return Object.assign({}, x, {work:w, rest:(x.rest || 0) + x.work - w});
     });
   };
 
   // Mid-session: what the round just done says, applied to the rounds still to come. Each round keeps its work plus
-  // the rest before it, so the session still ends on time: shorter work gets longer rest, and the other way.
-  // On a light day (technique) rounds only ever shorten.
+  // the rest before it, so the session still ends on time. Two signals: how the stance held through the round (work up
+  // to 10% more or 15% less) and how you started it after its rest (a strong start: the next rests 10% shorter and the
+  // time goes to work; a weak one: rests 15% longer). On a light day rounds only ever shorten.
   RT.adaptRound = function(r, upcoming, day){
-    const P = RT.PROG, obs = RT.capacityObs(r);
-    if (obs == null || !num(r.work) || r.work <= 0) return {k:1, rounds:upcoming};
-    const k = clampN(obs/r.work, 0.85, day && RT.DAYS[day] && RT.DAYS[day].light ? 1 : 1.1);
+    const P = RT.PROG, obs = RT.capacityObs(r), light = !!(day && RT.DAYS[day] && RT.DAYS[day].light);
+    const kw = obs == null || !num(r.work) || r.work <= 0 ? 1 : clampN(obs/r.work, 0.85, light ? 1 : 1.1);
+    const sp = r.startPct, kr = !num(sp) || !(r.rest > 0) ? 1 : sp >= P.startGood ? (light ? 1 : 0.9) : sp < P.startWeak ? 1.15 : 1;
+    if (kw === 1 && kr === 1) return {k:1, kr:1, rounds:upcoming};
     const out = upcoming.map(x => {
-      if (x.phase === 'warm' || x.phase === 'hold') return x;
-      const restMin = x.phase === 'live' && x.period > 1 ? 15 : P.restMin;
-      // longer work comes out of the rest, never below restMin
-      const max = Math.min(x.phase === 'live' ? P.liveMax : P.capMax, x.work + Math.max(0, x.rest - restMin));
-      const w = Math.min(max, Math.round(clampN(x.work*k, P.capMin, max)/5)*5);
-      return Object.assign({}, x, {work:w, rest:x.rest + x.work - w});
+      if (x.phase === 'warm' || x.phase === 'hold' || !num(x.work)) return x;
+      const cycle = x.work + x.rest, lo = Math.min(P.capMin, x.work), hi = Math.max(lo, cycle - P.restMin);
+      let want = x.work*kw;                                   // the stance signal
+      if (kr !== 1) {
+        const restT = clampN(x.rest*kr, P.restMin, cycle - lo);
+        if (kr < 1 && kw >= 1) want = Math.max(want, Math.min(x.work*1.15, cycle - restT));   // recovered: rest into work
+        if (kr > 1) want = Math.min(want, cycle - restT);                                    // not recovered: more rest
+      }
+      const w = Math.round(clampN(want, lo, hi));
+      return Object.assign({}, x, {work:w, rest:cycle - w});
     });
-    return {k, rounds:out};
+    return {k:kw, kr, rounds:out};
   };
 
   // Your level: the highest one that 2 of your last 5 full sessions meet, and what the next one needs.
@@ -1268,8 +1303,9 @@ function renderTrain(){
     $('trainSum').innerHTML = `<b>Today: ${esc(p.dayName)}</b> · ${p.rounds.length} rounds in ${settings.len} min, ${sec(p.work)} work, ${sec(p.rest)} rest, `
       + `explosive cap ${p.cap}, read windows ${Math.min(...ws).toFixed(2)} to ${Math.max(...ws).toFixed(2)} s. Each round re-tunes the next.`;
     $('trainWhy').innerHTML = p.why.map(w => `<li>${esc(w)}</li>`).join('');
-    $('trainNums').innerHTML = !h.length ? '' : `<b>Your numbers</b> · stance capacity ${sec(st.cap)} (goal ${sec(RT.GOAL.work)}), reads ${q.readWindow.toFixed(2)} s (goal ${RT.GOAL.window.toFixed(2)}), `
-      + `explosive ${Math.round(st.tol)} reps (goal ${RT.GOAL.tol}); ${st.week} session${st.week === 1 ? '' : 's'} in the last 7 days, this week's load ${st.acwr.toFixed(1)} times your usual.`;
+    $('trainNums').innerHTML = !h.length ? '' : `<b>Your numbers</b> · rounds of ${sec(st.cap)} held${st.longest ? ` (longest ${sec(st.longest)})` : ''}, `
+      + `${Math.round(st.rec*60)} s rest per minute of work, reads ${q.readWindow.toFixed(2)} s, explosive ${Math.round(st.tol)} reps. `
+      + `Goal: ${RT.GOAL.minutes} min continuous at ${RT.GOAL.window.toFixed(2)} s reads. ${st.week} session${st.week === 1 ? '' : 's'} in the last 7 days, this week's load ${st.acwr.toFixed(1)} times your usual.`;
   } else {
     $('trainStrip').innerHTML = '';
     $('trainSum').innerHTML = '<b>Free play</b> · camera sessions still save, and they count toward Train me.';
@@ -1285,7 +1321,8 @@ function renderTrain(){
      rts.length ? `fastest median reads in a session: ${rts.join(', ')}` : ''].filter(Boolean).join(' · ');
   $('histList').innerHTML = h.slice(-30).reverse().map(x => {
     const d = new Date(x.date), when = d.toLocaleDateString(undefined, {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
-    const what = x.kind === 'baseline' ? 'Baseline test' : x.kind === 'retest' ? 'Retest' : x.mode === 'free' ? 'Free play' : x.day && RT.DAYS[x.day] ? RT.DAYS[x.day].name : 'Train me';
+    const dk = x.day === 'technique' ? 'light' : x.day;
+    const what = x.kind === 'baseline' ? 'Baseline test' : x.kind === 'retest' ? 'Retest' : x.mode === 'free' ? 'Free play' : dk && RT.DAYS[dk] ? RT.DAYS[dk].name : 'Train me';
     const hold = x.holdS != null ? x.holdS : ((x.rounds || []).find(r => r.phase === 'hold' && r.hold != null) || {}).hold;
     const bits = [x.minutes ? `${x.minutes} min` : '', hold != null ? `hold ${sec(hold)}` : '', x.stancePct != null ? `stance ${Math.round(x.stancePct*100)}%` : '',
       x.onTime != null ? `${Math.round(x.onTime*100)}% on time` : '', x.score ? `live ${x.score.you}–${x.score.opp}` : '', x.partial ? 'ended early' : ''].filter(Boolean);
@@ -1449,7 +1486,8 @@ function roundBlurb(rd){
 function startRound(){
   const rd = S.plan[S.r];
   S.mode = 'work'; S.clock = rd.work || S.workDur;
-  S.R = {phase:rd.phase, work:0, inBand:0, reactions:[], recoveries:[], hits:0, misses:0, outT:0, breakT:null, low:null};
+  S.R = {phase:rd.phase, work:0, inBand:0, reactions:[], recoveries:[], hits:0, misses:0, outT:0, breakT:null, low:null,
+    plan:rd.work || S.workDur, rest:S.r ? (rd.rest != null ? rd.rest : S.restDur) : 0, startIn:0, startT:0};
   S.hold = {t:0, wait:0, inT:0, broke:0, started:false};
   S.cue = null; S.nextCueAt = S.time + 2.0; S.lastMoveT = S.time; S.hiT = 0; S.loT = 0; S.offAngle = 0;
   S.lastCorrection = S.time - 6; S.bot.q = [];
@@ -1566,7 +1604,8 @@ function warmRecord(){
 }
 // a round as saved: how long it ran, the share in stance, when the stance broke, a hold's time
 function roundRecord(R){
-  const r = {phase:R.phase, work:Math.round(R.work*10)/10, stancePct:R.work ? Math.round(1000*R.inBand/R.work)/1000 : null, breakT:R.breakT == null ? null : Math.round(R.breakT*10)/10};
+  const r = {phase:R.phase, work:Math.round(R.work*10)/10, plan:R.plan, rest:R.rest, stancePct:R.work ? Math.round(1000*R.inBand/R.work)/1000 : null,
+    startPct:R.startT >= 10 ? Math.round(1000*R.startIn/R.startT)/1000 : null, breakT:R.breakT == null ? null : Math.round(R.breakT*10)/10};
   if (R.phase === 'hold') { r.hold = R.holdS == null ? null : Math.round(R.holdS*10)/10; r.stancePct = null; }
   return r;
 }
@@ -1990,6 +2029,8 @@ function update(dt){
     const credit = inBand || !!S.action;
     S.R.work += dt; if (credit) S.R.inBand += dt;
     if (S.R.low == null || S.level < S.R.low) S.R.low = S.level;
+    // how you start the round (after its rest): in stance over the first startS
+    if (S.R.work <= RoomTime.PROG.startS) { S.R.startT += dt; if (credit) S.R.startIn += dt; }
     // when the stance first broke and stayed broken (3 s out of the band)
     S.R.outT = credit ? 0 : S.R.outT + dt;
     if (S.R.breakT == null && S.R.outT >= RoomTime.PROG.breakRoundS && rd.phase !== 'hold') S.R.breakT = Math.max(0, S.R.work - S.R.outT);
@@ -2364,7 +2405,8 @@ function trainDebrief(){
       ${rows}
       ${rec.explosive ? `<div><span>Shots and sprawls</span><span>${rec.explosive}${rec.tolOpen ? ', speed held' : ', speed faded after ' + rec.explosiveTol}</span></div>` : ''}
       ${rec.fakesBit ? `<div><span>Bit on fakes</span><span>${rec.fakesBit}</span></div>` : ''}
-      <div><span>Stance capacity</span><span>${sec(st.cap)}</span></div>
+      <div><span>Rounds held</span><span>${sec(st.cap)}</span></div>
+      <div><span>Rest needed</span><span>${Math.round(st.rec*60)} s per minute of work</span></div>
       <div><span>Reads</span><span>${q.readWindow.toFixed(2)} s</span></div>
       <div><span>Explosive</span><span>${Math.round(st.tol)} reps</span></div>
       <div><span>Level</span><span>${lv.name}</span></div>

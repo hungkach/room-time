@@ -189,8 +189,8 @@ try {
   check(cv && cv.steps.map((x) => x.name + ':' + x.state).join() === 'Standing:done,Floor:done' && cv.sweep.left < -0.8 && cv.sweep.right > 0.8,
     'the warm-up shows each part register: ' + (cv && cv.steps.map((x) => x.name + ':' + x.state).join()) + `, edges ${cv && cv.sweep.left.toFixed(2)} and ${cv && cv.sweep.right.toFixed(2)}`);
   const prog = await page.evaluate(() => ({ day: RoomTimeGame.S.prog.day, n: RoomTimeGame.S.plan.length, minutes: RoomTimeGame.S.prog.rounds.reduce((a, r) => a + r.work + r.rest, 0) / 60 }));
-  check(await page.textContent('#phaseName') === 'Warm-in' && prog.day === 'technique' && Math.abs(prog.minutes - 15) < 0.5,
-    `Train me after this morning's free play is a technique day of ${prog.minutes.toFixed(1)} min, ${prog.n} rounds, warm-in first`);
+  check(await page.textContent('#phaseName') === 'Warm-in' && prog.day === 'light' && Math.abs(prog.minutes - 15) < 0.5,
+    `Train me after this morning's free play is a light day of ${prog.minutes.toFixed(1)} min, ${prog.n} rounds, warm-in first`);
   // play a few rounds, then skip through the rest (game time runs slow at 2 fps here)
   await pose(POSE['Square stance']);
   await page.waitForFunction(() => RoomTimeGame.S.trials.length >= 1, null, { timeout: 120000 }).catch(() => {});
@@ -199,14 +199,14 @@ try {
   for (let i = 0; i < 40 && await page.evaluate(() => RoomTimeGame.S && RoomTimeGame.S.mode !== 'done'); i++) { await page.click('#skipBtn'); await page.waitForTimeout(250); }
   hist = await page.evaluate(() => JSON.parse(localStorage.getItem('roomtime.history') || '[]'));
   const b = hist[1] || {};
-  check(hist.length === 2 && b.kind === 'session' && b.day === 'technique' && !b.partial && b.rounds.length === prog.n && b.rounds.every((r) => typeof r.work === 'number') && b.load > 0,
+  check(hist.length === 2 && b.kind === 'session' && b.day === 'light' && !b.partial && b.rounds.length === prog.n && b.rounds.every((r) => typeof r.work === 'number') && b.load > 0,
     `the session is saved round by round: ${b.rounds && b.rounds.length} rounds, load ${b.load}, ${b.trials && b.trials.length} calls`);
   check(b.warm && typeof b.warm.stance === 'number' && b.readiness && /compares against your own after 3 sessions/.test(b.readiness.text),
     'the warm-in is measured and saved: ' + JSON.stringify(b.warm) + ' · ' + (b.readiness && b.readiness.text));
   check(/Saved/.test(await page.textContent('#debriefIn')) && /Next session/.test(await page.textContent('#debriefIn')), 'the debrief shows the saved numbers and the next session');
   await page.click('#menuBtn'); await page.waitForTimeout(300);
-  check(/^Today: Technique day/.test(await page.textContent('#trainSum')) && /Session 3 today/.test(await page.textContent('#trainWhy')), 'a third session today is planned around the first two: ' + await page.textContent('#trainSum'));
-  check(/^Your numbers · stance capacity/.test(await page.textContent('#trainNums')), 'your numbers: ' + await page.textContent('#trainNums'));
+  check(/^Today: Light day/.test(await page.textContent('#trainSum')) && /Session 3 today/.test(await page.textContent('#trainWhy')), 'a third session today is planned around the first two: ' + await page.textContent('#trainSum'));
+  check(/^Your numbers · rounds of \d+ s held/.test(await page.textContent('#trainNums')), 'your numbers: ' + await page.textContent('#trainNums'));
   check(/Level: Novice/.test(await page.textContent('#trainLevel')), 'level: ' + await page.textContent('#trainLevel'));
   const csv = await page.evaluate(() => RoomTime.toCSV(JSON.parse(localStorage.getItem('roomtime.history'))).trim().split('\n'));
   check(csv.length === 3 && /^date,mode,kind/.test(csv[0]), 'the CSV has a row per session');

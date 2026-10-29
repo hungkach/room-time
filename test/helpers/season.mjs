@@ -10,8 +10,9 @@ export function simulate(RT, schedule, opts = {}) {
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
   const grow = opts.grow == null ? 1 : opts.grow;
-  // the player: capacity (s at about 75% in stance), mean read (s), explosive reps before speed fades
-  const me = { cap: opts.cap || 40, rt: opts.rt || 0.95, tol: opts.tol || 14 };
+  // the player: capacity (s at about 75% in stance), rest needed per second of work, mean read (s), explosive reps
+  // before speed fades
+  const me = { cap: opts.cap || 40, rec: opts.rec || 1.0, rt: opts.rt || 0.95, tol: opts.tol || 14 };
   const h = opts.history ? opts.history.slice() : [], out = [];
   const T0 = opts.t0 || Date.parse('2026-11-02T12:00:00Z');
   let lastDay = null;
@@ -21,7 +22,7 @@ export function simulate(RT, schedule, opts = {}) {
     // detraining: after 3 days off, about 1% a day
     if (lastDay != null && day - lastDay > 3) {
       const k = Math.pow(0.99, day - lastDay - 3);
-      me.cap = Math.max(30, me.cap * k); me.tol = Math.max(10, me.tol * k); me.rt = Math.min(1.1, me.rt / k);
+      me.cap = Math.max(30, me.cap * k); me.tol = Math.max(10, me.tol * k); me.rt = Math.min(1.1, me.rt / k); me.rec = Math.min(1.2, me.rec / k);
     }
     lastDay = day;
     const p = RT.planNext(h, now, { minutes });
@@ -33,13 +34,18 @@ export function simulate(RT, schedule, opts = {}) {
       const rd = plan[i];
       elapsed += rd.work + (i ? rd.rest : 0);
       // stance: about 75% at your capacity, better on shorter rounds, a little worse late in the session
-      const tired = 1 - 0.015 * i, c = me.cap * tired;
+      // recovery: the rest before this round against what the work before it needed
+      const prev = rounds[rounds.length - 1];
+      const after = i > 0 && prev && prev.phase !== 'warm' && prev.phase !== 'hold';
+      const recovered = after ? Math.min(1.5, rd.rest / prev.work / me.rec) : 1;
+      const tired = 1 - 0.015 * i, c = me.cap * tired * Math.pow(Math.min(1, recovered), 0.3);
       let sp, breakT = null, hold = null;
       if (rd.phase === 'hold') {
         hold = Math.min(rd.work, c / 0.6 * (1 + 0.05 * gauss()));
-        rounds.push({ phase: 'hold', work: hold, hold, stancePct: 1 });
+        rounds.push({ phase: 'hold', work: hold, plan: rd.work, rest: rd.rest, hold, stancePct: 1 });
         continue;
       }
+      const startPct = after ? Math.max(0.35, Math.min(0.97, 0.78 + 0.3 * (recovered - 1) + 0.03 * gauss())) : null;
       sp = Math.max(0.3, Math.min(0.97, 0.75 * Math.pow(c / rd.work, 0.5) + 0.03 * gauss()));
       if (rd.phase === 'warm') sp = Math.min(0.97, sp + 0.1);
       if (sp < 0.7) breakT = rd.work * sp / 0.75 * 0.8;
@@ -64,7 +70,7 @@ export function simulate(RT, schedule, opts = {}) {
           }
         }
       }
-      const r = { phase: rd.phase, work: rd.work, stancePct: sp, breakT };
+      const r = { phase: rd.phase, work: rd.work, plan: rd.work, rest: i ? rd.rest : 0, stancePct: sp, startPct, breakT };
       rounds.push(r);
       // the game's mid-session adjustment
       plan = plan.slice(0, i + 1).concat(RT.adaptRound(r, plan.slice(i + 1), p.day).rounds);
@@ -82,7 +88,8 @@ export function simulate(RT, schedule, opts = {}) {
     out.push({ day, minutes, plan: p, rec, elapsed, me: { ...me }, state: p.state });
     // training effect: steady work builds all three, slowly, toward a ceiling
     const L = rec.load;
-    me.cap = Math.min(150, me.cap * (1 + 0.012 * grow * Math.min(L, 12) / 8));
+    me.cap = Math.min(900, me.cap * (1 + 0.012 * grow * Math.min(L, 12) / 8));
+    me.rec = Math.max(0.12, me.rec * (1 - 0.012 * grow * Math.min(L, 12) / 8));
     me.tol = Math.min(40, me.tol * (1 + 0.01 * grow * Math.min(L, 12) / 8));
     me.rt = Math.max(0.55, me.rt * (1 - 0.004 * grow * Math.min(L, 12) / 8));
   }
