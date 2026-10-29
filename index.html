@@ -120,6 +120,10 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 
 /* camera check (Phase 0) */
 .actions.one{grid-template-columns:1fr}
+.plan .why{margin:0;padding-left:18px;font-size:.88rem;line-height:1.45;color:var(--muted)}
+#histBox summary{cursor:pointer;font-weight:600;font-size:.92rem}
+#histBox[open]{display:flex;flex-direction:column;gap:10px}
+.hist{margin:0;padding-left:18px;font-size:.84rem;line-height:1.5;color:var(--muted);max-height:220px;overflow:auto}
 #lab{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;padding-block:8px 10px}
 #labTop{display:flex;align-items:center;gap:10px}
 #labTop h2{font-family:var(--f-display);font-weight:700;font-size:1.5rem;line-height:1;margin:0;flex:none}
@@ -192,6 +196,10 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         <button data-v="front">Front camera<small>you see the screen</small></button>
         <button data-v="back">Back camera<small>widest view, by sound</small></button>
       </div>
+      <div class="seg c2" id="segTrain">
+        <button data-v="1">Train me<small>planned from your history</small></button>
+        <button data-v="0">Free play<small>length and pace above</small></button>
+      </div>
     </div>
     <div class="field">
       <div class="lab">Preview</div>
@@ -218,9 +226,22 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     </div>
     <div class="actions one"><button class="primary" id="camPlayBtn">Camera play</button><button class="secondary" id="labBtn" hidden>Camera check</button></div>
 
+    <div class="plan" id="trainCard">
+      <div class="sum" id="trainSum"></div>
+      <ul class="why" id="trainWhy"></ul>
+      <div class="sum" id="trainLevel"></div>
+      <details id="histBox">
+        <summary>History and records</summary>
+        <div class="sum" id="histRec"></div>
+        <ol class="hist" id="histList"></ol>
+        <div class="actions"><button class="secondary" id="csvBtn">Export CSV</button><button class="secondary" id="histClear">Clear history</button></div>
+      </details>
+    </div>
+
     <div class="how">
       <div><b>Pad:</b> hold your thumb in the green band to stay in stance. Drag down fast for a level change. Slide left or right to move your feet. Let go and you stand up.</div>
-      <div><b>Camera play:</b> prop the device sideways at hip height about 6 ft away (on an iPad, Center Stage off in Control Center). It calibrates you first: three holds, then shuffle to your left until it beeps or you reach your wall, pause, then all the way to your right and pause. With the back camera the screen faces away, so it all runs by sound.</div>
+      <div><b>Camera play:</b> prop the device sideways at hip height about 6 ft away (on an iPad, Center Stage off in Control Center). It calibrates you first: three holds, then shuffle to your left until it beeps or you reach your wall, pause, then all the way to your right and pause. After that, for two weeks on the same camera, it's a quick check: stand, then the shuffle. With the back camera the screen faces away, so it all runs by sound.</div>
+      <div><b>Train me:</b> the first camera session is a test: hold your stance as long as you can, then every move called at random, then a live round. Each session after is planned from every saved session (recent ones count most): round length and rest from your stance, a read window per move from every call, more calls on your weakest move, and lighter days when you go several days in a row or come back from time off. Sessions save on this device only (no video, only numbers); export them as a CSV from History.</div>
       <div><b>Block:</b> a down block, hands to his head and shoulders, hips back, feet planted. It stops a shot from range for little effort; a deep shot runs through it and needs the sprawl.</div>
       <div><b>Sprawl, shot, snap:</b> your big moves. Each round, the coach calls them and the drill partner shows the look.</div>
       <div><b>Live go reads:</b></div>
@@ -920,7 +941,8 @@ const PACE = {
   hard:  {gap:[1.8,2.9], win:0.95, tell:0.46, opening:0.7,  decide:[0.9,1.7], cap:40}
 };
 const LAYOUT = {15:{tech:2,sit:1,live:[2]}, 20:{tech:2,sit:2,live:[3]}, 25:{tech:2,sit:1,live:[3,3]}, 30:{tech:3,sit:2,live:[3,3]}};
-const PHASE = {warm:{name:'Warm-in',c:'p-warm'}, tech:{name:'Technique',c:'blue'}, sit:{name:'Situations',c:'amber'}, live:{name:'Live go',c:'red'}};
+const PHASE = {warm:{name:'Warm-in',c:'p-warm'}, tech:{name:'Technique',c:'blue'}, sit:{name:'Situations',c:'amber'}, live:{name:'Live go',c:'red'},
+  hold:{name:'Stance hold',c:'green'}, react:{name:'Reaction test',c:'blue'}};
 const SINGLE = {
   left:{label:'Circle left',say:'Circle left'}, right:{label:'Circle right',say:'Circle right'},
   level:{label:'Level change',say:'Level'}, sprawl:{label:'Sprawl',say:'Sprawl'},
@@ -943,7 +965,7 @@ const fmtClock = s => { s = Math.max(0, Math.ceil(s)); return Math.floor(s/60) +
 const ms = s => Math.round(s*1000) + ' ms';
 
 /* ---------- settings ---------- */
-let settings = {len:15, pace:'match', quick:true, device:'tablet', facing:'front'};
+let settings = {len:15, pace:'match', quick:true, device:'tablet', facing:'front', train:true};
 try { const s = JSON.parse(localStorage.getItem('roomtime.settings') || 'null'); if (s && LAYOUT[s.len] && PACE[s.pace]) settings = Object.assign(settings, s); } catch(e) {}
 if (!['tablet', 'phone'].includes(settings.device)) settings.device = 'tablet';
 if (!['front', 'back'].includes(settings.facing)) settings.facing = 'front';
@@ -960,9 +982,9 @@ function buildPlan(len){
 }
 
 function renderMenu(){
-  [['segLen','len'],['segPace','pace'],['segQuick','quick'],['segDevice','device'],['segFacing','facing']].forEach(([id,key]) => {
+  [['segLen','len'],['segPace','pace'],['segQuick','quick'],['segDevice','device'],['segFacing','facing'],['segTrain','train']].forEach(([id,key]) => {
     $(id).querySelectorAll('button').forEach(b => {
-      const v = key==='len' ? +b.dataset.v : key==='quick' ? b.dataset.v==='1' : b.dataset.v;
+      const v = key==='len' ? +b.dataset.v : (key==='quick' || key==='train') ? b.dataset.v==='1' : b.dataset.v;
       b.setAttribute('aria-pressed', String(settings[key] === v));
     });
   });
@@ -974,12 +996,66 @@ function renderMenu(){
   const goTxt = L.live.length > 1 ? `two live goes of ${L.live[0]} periods` : `a ${L.live[0]}-period live go`;
   $('planSum').innerHTML = `<b>${plan.length} rounds</b> · warm-in, technique ×${L.tech}, situations ×${L.sit}, then ${goTxt}. ` +
     (settings.quick ? `Quick look runs about ${fmtClock(total)} so you can see the whole arc; full length is ${settings.len}:00.` : `Runs ${fmtClock(total)}.`);
+  renderTrain();
 }
+// The Train me card: the next camera session, why, your level, and your records. Plain facts.
+function renderTrain(){
+  const RT = globalThis.RoomTime, h = loadHistory();
+  $('trainCard').hidden = !RT || !RT.planNext;
+  if ($('trainCard').hidden) return;
+  const esc = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]);
+  const sec = v => v >= 60 ? `${Math.floor(v/60)}:${String(Math.round(v%60)).padStart(2, '0')}` : `${Math.round(v)} s`;
+  if (settings.train) {
+    const p = RT.planNext(h, Date.now(), {minutes:settings.len}), t = p.session || p;
+    const n = p.rounds.length;
+    $('trainSum').innerHTML = p.kind === 'session'
+      ? `<b>Next camera session</b> · ${n} rounds of ${sec(t.work)}, ${sec(t.rest)} rest, explosive cap ${t.cap}, read windows ${Math.min(...RT.PROG.moves.map(m => t.windows[m])).toFixed(2)} to ${Math.max(...RT.PROG.moves.map(m => t.windows[m])).toFixed(2)} s.`
+      : `<b>Next camera session: ${p.kind === 'baseline' ? 'baseline test' : 'retest'}</b> · about ${Math.round(p.rounds.reduce((a, r) => a + r.work, 0)/60 + 1.5)} min.`;
+    $('trainWhy').innerHTML = p.why.concat(p.goal ? [p.goal.text] : []).map(w => `<li>${esc(w)}</li>`).join('');
+  } else {
+    $('trainSum').innerHTML = '<b>Free play</b> · camera sessions still save, and their reads count toward Train me.';
+    $('trainWhy').innerHTML = '';
+  }
+  const lv = RT.levelOf(h);
+  $('trainLevel').innerHTML = `<b>Level: ${esc(lv.name)}</b>` + (lv.next ? ` · ${esc(lv.next)} needs ${esc(lv.needs.join(', '))}.` : '');
+  const rec = RT.records(h), rts = RT.PROG.moves.filter(m => rec.rt[m] != null).map(m => `${RT.MOVE_NAMES[m]} ${Math.round(rec.rt[m]*1000)} ms`);
+  $('histRec').innerHTML = !h.length ? 'No camera sessions saved yet.' :
+    [`${h.length} session${h.length > 1 ? 's' : ''} saved on this device`,
+     rec.holdS != null ? `longest stance hold ${sec(rec.holdS)}` : '',
+     rec.stancePct != null ? `best stance ${Math.round(rec.stancePct*100)}%` : '',
+     rts.length ? `fastest median reads in a session: ${rts.join(', ')}` : ''].filter(Boolean).join(' · ');
+  $('histList').innerHTML = h.slice(-30).reverse().map(x => {
+    const d = new Date(x.date), when = d.toLocaleDateString(undefined, {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
+    const what = x.kind === 'baseline' ? 'Baseline test' : x.kind === 'retest' ? 'Retest' : x.mode === 'free' ? 'Free play' : 'Train me';
+    const bits = [x.holdS != null ? `hold ${sec(x.holdS)}` : '', x.stancePct != null ? `stance ${Math.round(x.stancePct*100)}%` : '',
+      x.onTime != null ? `${Math.round(x.onTime*100)}% on time` : '', x.score ? `live ${x.score.you}–${x.score.opp}` : '', x.partial ? 'ended early' : ''].filter(Boolean);
+    return `<li>${esc(when)} · ${what}${bits.length ? ' · ' + esc(bits.join(', ')) : ''}</li>`;
+  }).join('');
+  $('csvBtn').disabled = !h.length; $('histClear').disabled = !h.length;
+}
+// The CSV goes through the share sheet where there is one (Files, Numbers, Mail on iPad), else downloads.
+async function exportCSV(){
+  const csv = globalThis.RoomTime.toCSV(loadHistory()), name = `room-time-${new Date().toISOString().slice(0, 10)}.csv`;
+  try {
+    const file = new File([csv], name, {type:'text/csv'});
+    if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file], title:'Room Time sessions'}); return; }
+  } catch(e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'})); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+$('csvBtn').addEventListener('click', exportCSV);
+$('histClear').addEventListener('click', () => {
+  if (!confirm('Delete every saved session on this device? Export the CSV first if you want to keep them.')) return;
+  try { localStorage.removeItem('roomtime.history'); } catch(e) {}
+  renderTrain();
+});
 $('segLen').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.len = +b.dataset.v; saveSettings(); renderMenu(); });
 $('segPace').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.pace = b.dataset.v; saveSettings(); renderMenu(); });
 $('segQuick').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.quick = b.dataset.v==='1'; saveSettings(); renderMenu(); });
 $('segDevice').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.device = b.dataset.v; saveSettings(); renderMenu(); });
 $('segFacing').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.facing = b.dataset.v; saveSettings(); renderMenu(); });
+$('segTrain').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.train = b.dataset.v === '1'; saveSettings(); renderMenu(); });
 renderMenu();
 
 /* ---------- audio ---------- */
@@ -1026,15 +1102,22 @@ function resize(){
 }
 window.addEventListener('resize', resize);
 
-// cam: camera play, where the tracker (rt-lab-tools) writes S.cam {level, floorX, head, seen} every frame
+// cam: camera play, where the tracker (rt-lab-tools) writes S.cam {level, floorX, head, seen} every frame.
+// In camera play with Train me on, the session is planned from every saved session (RoomTime.planNext).
 function startSession(auto, cam){
   ensureAudio();
-  const P = PACE[settings.pace];
+  const RT = globalThis.RoomTime, train = !!(cam && !auto && settings.train && RT && RT.planNext);
+  const prog = train ? RT.planNext(loadHistory(), Date.now(), {minutes:settings.len, fast:FASTQ}) : null;
+  const today = prog && prog.session ? prog.session : prog;   // a session plan's adjustments for today
+  const P = prog ? progPace(today.windows) : PACE[settings.pace];
   S = {
-    auto, P, len:settings.len, plan:buildPlan(settings.len), workDur:settings.quick?30:120, restDur:settings.quick?8:30,
+    auto, P, len:settings.len, plan:prog ? prog.rounds : buildPlan(settings.len),
+    workDur:prog ? (FASTQ && prog.kind === 'session' ? 15 : today.work) : settings.quick?30:120,
+    restDur:prog ? (FASTQ ? 4 : today.rest) : settings.quick?8:30,
+    prog, windows:prog ? today.windows : null, trials:[], reps:[], fakesBit:0, startedAt:new Date().toISOString(), saved:false,
     r:0, mode:'work', time:0, clock:0, paused:false,
     level:1, padActive:false, padTarget:1, youX:0, vx:0, latchL:false, latchR:false, hist:[], lastLevelEvt:-9,
-    action:null, preLevel:1, recoverFrom:null, explosive:0, cap:Math.round(P.cap*settings.len/15), capSaid:false,
+    action:null, preLevel:1, recoverFrom:null, explosive:0, cap:prog ? today.cap : Math.round(P.cap*settings.len/15), capSaid:false,
     bandEMA:1, offAngle:0, cue:null, nextCueAt:0, lastCue:null,
     opp:{x:0, vx:0, state:'circle', t:0, dur:2, fake:false, tellT:0},
     pose:{crouch:0.45, lean:0.38, arms:0, reach:0, head:0, scale:1, dy:0},
@@ -1055,6 +1138,7 @@ function startSession(auto, cam){
   startRound();
 }
 function quit(){
+  if (S && S.cam && S.mode !== 'calib' && S.mode !== 'done') saveSession(true);
   try { speechSynthesis.cancel(); } catch(e) {}
   try { wakeLock && wakeLock.release(); } catch(e) {}
   const wasCam = S && S.cam;
@@ -1067,6 +1151,8 @@ function roundTitle(rd){
   return PHASE[rd.phase].name + (rd.of > 1 ? ' ' + (rd.k+1) : '');
 }
 function roundBlurb(rd){
+  if (rd.phase === 'hold') return 'hold your stance as long as you can';
+  if (rd.phase === 'react') return 'every move, called at random';
   if (rd.phase === 'warm') return 'motion and level changes';
   if (rd.phase === 'tech') return rd.k === 0 ? 'motion, level changes, sprawls' : 'adds shots and snaps';
   if (rd.phase === 'sit') return 'chains off the first move';
@@ -1075,15 +1161,18 @@ function roundBlurb(rd){
 
 function startRound(){
   const rd = S.plan[S.r];
-  S.mode = 'work'; S.clock = S.workDur;
+  S.mode = 'work'; S.clock = rd.work || S.workDur;
   S.R = {phase:rd.phase, work:0, inBand:0, reactions:[], recoveries:[], hits:0, misses:0};
+  S.hold = {t:0, wait:0, inT:0, broke:0, started:false};
   S.cue = null; S.nextCueAt = S.time + 2.0; S.lastMoveT = S.time; S.hiT = 0; S.loT = 0; S.offAngle = 0;
   S.lastCorrection = S.time - 6; S.bot.q = [];
   if (rd.phase === 'live') { if (rd.period === 1) S.score = {you:0, opp:0}; S.opp.x = 0; setOpp('circle', 1.6); }
   else setOpp('circle', 999);
   sfx.whistle();
   let intro;
-  if (rd.phase === 'warm') intro = 'Warm in. Motion and level changes.';
+  if (rd.phase === 'hold') intro = 'Stance hold. Get in your stance and hold it as long as you can.';
+  else if (rd.phase === 'react') intro = 'Reaction test. Every move, called at random.';
+  else if (rd.phase === 'warm') intro = 'Warm in. Motion and level changes.';
   else if (rd.phase === 'tech') intro = rd.k === 0 ? 'Technique. Motion, level, sprawl.' : 'Technique. Adding shots and snaps.';
   else if (rd.phase === 'sit') intro = 'Situations. Chains off the first move.';
   else intro = rd.period === 1 ? `Live go${rd.goCount>1 ? ' ' + NUMW[rd.go+1] : ''}. Period one.` : `Period ${NUMW[rd.period]}.`;
@@ -1094,6 +1183,7 @@ function startRound(){
 function endWork(){
   sfx.buzzer();
   const rd = S.plan[S.r], R = S.R;
+  if (rd.phase === 'hold' && R.holdS == null) R.holdS = S.hold.started ? S.hold.t : 0;
   S.rounds.push(R); S.cue = null; S.action = null; S.recoverFrom = null;
   if (rd.phase === 'live' && rd.period === rd.periods) S.goes.push({you:S.score.you, opp:S.score.opp});
   if (S.r >= S.plan.length - 1) { finish(); return; }
@@ -1101,7 +1191,9 @@ function endWork(){
   S.mode = 'rest'; S.clock = S.restDur;
   const pct = Math.round(100*R.inBand/Math.max(R.work, 0.01));
   let spoken, shown;
-  if (rd.phase === 'live') {
+  if (rd.phase === 'hold') {
+    shown = `Stance held ${Math.round(R.holdS)} s`; spoken = '';
+  } else if (rd.phase === 'live') {
     const fin = rd.period === rd.periods;
     shown = `${fin ? 'Final' : 'Score'} ${S.score.you}–${S.score.opp} · in stance ${pct}%`;
     spoken = `${fin ? 'Final, ' : ''}${S.score.you} to ${S.score.opp}. In stance ${pct} percent.`;
@@ -1112,12 +1204,76 @@ function endWork(){
   }
   S.restNote = shown;
   setOpp('rest', 999);
-  setTimeout(() => { if (S && S.mode === 'rest') say(spoken, false); }, 900);
+  if (spoken) setTimeout(() => { if (S && S.mode === 'rest') say(spoken, false); }, 900);
 }
 function finish(){
   S.mode = 'done';
+  saveSession(false);
   try { wakeLock && wakeLock.release(); } catch(e) {}
   buildDebrief();
+}
+
+/* ---------- the stance hold (test rounds) ---------- */
+function holdUpdate(dt){
+  const H = S.hold, PR = globalThis.RoomTime.PROG;
+  S.opp.t += dt;
+  if (!H.started) {
+    H.wait += dt; H.inT = S.level <= BAND.hi ? H.inT + dt : 0;
+    if (H.inT >= 0.5 || H.wait >= 10) { H.started = true; sfx.blip(); callout('Hold', '', 'cue'); }
+    return;
+  }
+  H.t += dt;
+  H.broke = S.level > BAND.hi + 0.02 ? H.broke + dt : 0;
+  if (H.broke >= PR.breakS && S.R.holdS == null) {
+    S.R.holdS = Math.max(0, H.t - H.broke);
+    say(`Held ${Math.round(S.R.holdS)} seconds.`, true);
+    S.clock = 0;
+  }
+}
+
+/* ---------- Train me: every call and read, and the saved session ---------- */
+const FASTQ = /[?&]fast\b/.test(location.search);   // headless checks: short rounds
+const moveKey = m => (m === 'left' || m === 'right' || m === 'move') ? 'circle' : m;
+// a live opponent paced by your reaction windows: his tells and openings scale with your sprawl and shot windows
+function progPace(w){
+  const base = PACE.match, k = v => v/RoomTime.PROG.window0;
+  return Object.assign({}, base, {tell:base.tell*k(w.sprawl), opening:base.opening*k(w.shot), handK:k(w.snap), win:base.win});
+}
+function recordMove(m, hit, rt){
+  if (!S || S.auto) return;
+  S.trials.push({m:moveKey(m), h:!!hit, rt:hit && rt != null ? Math.round(rt*1000)/1000 : null});
+}
+function loadHistory(){ try { return JSON.parse(localStorage.getItem('roomtime.history') || '[]') || []; } catch(e) { return []; } }
+function saveSession(partial){
+  if (!S || !S.cam || S.auto || S.saved) return null;
+  // ended early: the round underway counts as far as it got
+  const rs = S.rounds.concat(partial && S.mode === 'work' && S.R && S.R.work > 5 ? [S.R] : []);
+  if (!rs.length) return null;
+  S.saved = true;
+  const RT = globalThis.RoomTime, play = rs.filter(r => r.phase !== 'hold');
+  const sum = (a, f) => a.reduce((x, r) => x + f(r), 0);
+  const med = a => RT.median(a);
+  // shot and sprawl speed: the first two and last two rounds that had any
+  const withReps = [...new Set(S.reps.map(x => x.r))].sort((a, b) => a - b);
+  const speedIn = rr => med(S.reps.filter(x => rr.includes(x.r)).map(x => x.speed));
+  const hold = rs.find(r => r.phase === 'hold');
+  const w = S.windows || Object.fromEntries(RT.PROG.moves.map(m => [m, S.P.win]));
+  const rec = {
+    date:S.startedAt, mode:S.prog ? 'train' : 'free', kind:S.prog ? S.prog.kind : 'free', partial:!!partial,
+    minutes:Math.round((S.plan.reduce((a, rd) => a + (rd.work || S.workDur), 0) + (S.plan.length - 1)*S.restDur)/60),
+    work:S.prog ? S.prog.work : S.workDur, rest:S.prog ? S.prog.rest : S.restDur, cap:S.prog ? S.prog.cap : S.cap,
+    readWindow:RT.PROG.moves.reduce((a, m) => a + w[m], 0)/RT.PROG.moves.length,
+    onTime:S.trials.length ? S.trials.filter(t => t.h).length/S.trials.length : null,
+    rounds:rs.map(r => ({phase:r.phase, stancePct:r.work ? Math.round(1000*r.inBand/r.work)/1000 : null})),
+    stancePct:sum(play, r => r.work) ? sum(play, r => r.inBand)/sum(play, r => r.work) : null,
+    holdS:hold ? hold.holdS : null, moves:RT.moveStats(S.trials), trials:S.trials,
+    speed:{first:withReps.length >= 3 ? speedIn(withReps.slice(0, 2)) : null, last:withReps.length >= 3 ? speedIn(withReps.slice(-2)) : null},
+    explosive:S.explosive, score:S.goes.length ? S.goes[S.goes.length - 1] : null, fakesBit:S.fakesBit
+  };
+  const h = loadHistory(); h.push(rec);
+  try { localStorage.setItem('roomtime.history', JSON.stringify(h)); } catch(e) {}
+  S.savedRec = rec;
+  return rec;
 }
 
 /* ---------- opponent / drill partner ---------- */
@@ -1142,7 +1298,7 @@ function decide(){
   for (const k in w) { x -= w[k]; if (x <= 0) { pickK = k; break; } }
   const shrink = 1 - 0.06*(rd.period - 1);
   if (pickK === 'circle') setOpp('circle', rand(...P.decide));
-  else if (pickK === 'hand') setOpp('hand', 1.35);
+  else if (pickK === 'hand') setOpp('hand', 1.35*(P.handK || 1));
   else if (pickK === 'fake') setOpp('tell', P.tell*shrink, {fake:true});
   else if (pickK === 'shot') setOpp('tell', P.tell*shrink*(angle ? 0.7 : 1), {fake:false});
   else if (pickK === 'press') setOpp('press', 2.4);
@@ -1179,12 +1335,12 @@ function liveUpdate(dt){
       if (S.pressOff > 0.5) { callout('Circled off', 'back to center', 'good'); sfx.blip(); setOpp('circle', rand(...S.P.decide)); }
       else if (o.t > o.dur) setOpp('circle', rand(...S.P.decide));
       break;
-    case 'hand': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
+    case 'hand': if (o.t > o.dur) { recordMove('snap', false); setOpp('circle', rand(...S.P.decide)); } break;
     case 'tell': if (o.t > o.dur) { if (o.fake) setOpp('fakeBack', 0.5); else setOpp('shoot', 0.36); } break;
     case 'fakeBack': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
     case 'blocked': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
-    case 'shoot': if (o.t > o.dur + 0.12) { score('opp', 2, 'Takedown', 'opponent +2'); setOpp('reset', 1.5); } break;
-    case 'opening': if (o.t > o.dur) setOpp('circle', rand(...S.P.decide)); break;
+    case 'shoot': if (o.t > o.dur + 0.12) { recordMove('sprawl', false); score('opp', 2, 'Takedown', 'opponent +2'); setOpp('reset', 1.5); } break;
+    case 'opening': if (o.t > o.dur) { recordMove('shot', false); setOpp('circle', rand(...S.P.decide)); } break;
     case 'stuffed': case 'snapped': if (o.t > o.dur) { callout('Reset', 'no go-behind', 'info'); setOpp('reset', 1.2); } break;
     case 'reset':
       // whistle reset: both wrestlers walk back to center, like a real restart
@@ -1205,9 +1361,10 @@ function liveInput(type){
   const o = S.opp;
   if (type === 'sprawl') {
     if ((o.state === 'tell' && !o.fake) || o.state === 'shoot') {
-      const rt = S.time - o.tellT; S.R.reactions.push(rt);
+      const rt = S.time - o.tellT; S.R.reactions.push(rt); recordMove('sprawl', true, rt);
       sfx.thud(); callout('Stuffed', ms(rt) + ' · slide to go behind', 'good'); setOpp('stuffed', 1.15);
     } else if ((o.state === 'tell' && o.fake) || o.state === 'fakeBack') {
+      S.fakesBit++;
       callout('Bit on the fake', 'he re-shoots', 'miss'); sfx.miss(); S.bandEMA = Math.max(0, S.bandEMA - 0.15);
       setOpp('tell', 0.32, {fake:false, quick:true});
     } else { callout('Nothing there', '', 'info'); }
@@ -1215,25 +1372,26 @@ function liveInput(type){
     // a down block stops his shot while it's still from range (the tell, or the first moment of the shot);
     // once he's in deep it gets run through and only the sprawl works
     if ((o.state === 'tell' && !o.fake) || (o.state === 'shoot' && o.t <= 0.12)) {
-      const rt = S.time - o.tellT; S.R.reactions.push(rt);
+      const rt = S.time - o.tellT; S.R.reactions.push(rt); recordMove('block', true, rt);
       sfx.thud(); callout('Blocked', ms(rt), 'good'); setOpp('blocked', 0.7);
-    } else if (o.state === 'shoot') { score('opp', 2, 'Ran through the block', 'in deep: sprawl · opponent +2'); setOpp('reset', 1.5); }
+    } else if (o.state === 'shoot') { recordMove('block', false); score('opp', 2, 'Ran through the block', 'in deep: sprawl · opponent +2'); setOpp('reset', 1.5); }
     else if ((o.state === 'tell' && o.fake) || o.state === 'fakeBack') {
+      S.fakesBit++;
       callout('Bit on the fake', 'he re-shoots', 'miss'); sfx.miss(); S.bandEMA = Math.max(0, S.bandEMA - 0.1);
       setOpp('tell', 0.32, {fake:false, quick:true});
     } else callout('Nothing there', '', 'info');
   } else if (type === 'shot') {
     if (o.state === 'opening') {
       const rt = S.time - o.t0; S.R.reactions.push(rt);
-      if (S.preLevel <= BAND.hi + 0.03) { score('you', 2, 'Takedown', ms(rt) + ' · you +2'); setOpp('reset', 1.5); }
-      else { callout('Too high, stuffed', 'shoot from your stance', 'miss'); sfx.miss(); setOpp('reset', 1.3); }
+      if (S.preLevel <= BAND.hi + 0.03) { recordMove('shot', true, rt); score('you', 2, 'Takedown', ms(rt) + ' · you +2'); setOpp('reset', 1.5); }
+      else { recordMove('shot', false); callout('Too high, stuffed', 'shoot from your stance', 'miss'); sfx.miss(); setOpp('reset', 1.3); }
     } else if (['circle','hand','fakeBack','tell','reset','press'].includes(o.state)) {
       if (Math.random() < 0.3) { score('opp', 2, 'Countered', 'no opening · opponent +2'); }
       else { callout('No opening', 'wait for the reach', 'miss'); sfx.miss(); }
       setOpp('reset', 1.3);
     }
   } else if (type === 'snap') {
-    if (o.state === 'hand') { callout('Snapped', 'slide to go behind', 'good'); sfx.blip(); setOpp('snapped', 1.1); }
+    if (o.state === 'hand') { recordMove('snap', true, S.time - o.t0); callout('Snapped', 'slide to go behind', 'good'); sfx.blip(); setOpp('snapped', 1.1); }
     else callout('No tie', '', 'info');
   } else if (type === 'left' || type === 'right') {
     if (o.state === 'stuffed' || o.state === 'snapped') {
@@ -1243,13 +1401,21 @@ function liveInput(type){
 }
 
 /* ---------- drills ---------- */
-function cueWindow(){ const rd = S.plan[S.r]; return S.P.win * (rd.phase === 'warm' ? 1.35 : 1); }
+// the reaction window for a call: in Train me each move has its own (the staircase), else the pace preset's
+function cueWindow(move){
+  const rd = S.plan[S.r], w = S.windows && move ? S.windows[moveKey(move)] : null;
+  return (w || S.P.win) * (rd.phase === 'warm' ? 1.35 : 1);
+}
 function pickCue(){
   const rd = S.plan[S.r], capHit = S.explosive >= S.cap;
   if (capHit && !S.capSaid) { S.capSaid = true; coach('Explosive cap reached. Level changes and motion only.'); }
   let pool = null;
   if (rd.phase === 'warm') pool = ['left','right','level','left','right'];
   else if (rd.phase === 'tech') pool = rd.k === 0 ? ['left','right','level','sprawl','sprawl','block'] : ['left','right','level','sprawl','sprawl','block','shot','snap'];
+  else if (rd.phase === 'react') pool = ['left','right','level','level','sprawl','sprawl','block','block','shot','shot','snap','snap'];
+  // Train me: more calls on your weakest move
+  const weak = S.prog && S.prog.weak;
+  if (pool && weak) { const add = weak === 'circle' ? ['left','right'] : [weak]; if (pool.includes(add[0])) pool = pool.concat(add, add); }
   if (pool) {
     if (capHit) pool = pool.filter(x => x !== 'sprawl' && x !== 'shot');
     let t = pick(pool); if (t === S.lastCue && Math.random() < 0.6) t = pick(pool);
@@ -1271,12 +1437,12 @@ function homeward(t){
 function partnerFor(step){
   if (step === 'sprawl') setOpp('shoot', 0.45);
   else if (step === 'block') setOpp('tell', 0.6, {fake:false});   // a shot look from range
-  else if (step === 'shot') setOpp('opening', cueWindow());
-  else if (step === 'snap') setOpp('hand', cueWindow());
+  else if (step === 'shot') setOpp('opening', cueWindow('shot'));
+  else if (step === 'snap') setOpp('hand', cueWindow('snap'));
   else if (step === 'level') setOpp('dip', 0.6);
 }
 function startCue(){
-  const def = pickCue(), w = cueWindow();
+  const def = pickCue(), w = cueWindow(def.seq[0]);
   S.cue = {label:def.label, seq:def.seq, step:0, t0:S.time, stepT:S.time, deadline:S.time + w};
   callout(def.label, '', 'cue'); say(def.say, true); partnerFor(def.seq[0]);
   if (S.auto) botReactCue(S.cue);
@@ -1287,6 +1453,7 @@ function scheduleCue(){
   S.nextCueAt = S.time + g;
 }
 function missCue(reason){
+  if (S.cue) recordMove(S.cue.seq[S.cue.step], false);
   S.R.misses++; callout(reason, S.cue ? S.cue.label : '', 'miss'); sfx.miss(); S.cue = null; scheduleCue();
 }
 function drillUpdate(dt){
@@ -1303,13 +1470,14 @@ function drillInput(type){
   if (ok) {
     const rt = S.time - c.stepT;
     if (c.step === 0) S.R.reactions.push(rt);
+    recordMove(need, true, rt);
     c.step++;
     if (c.step >= c.seq.length) {
       S.R.hits++; sfx.blip();
       callout(ms(c.seq.length > 1 ? S.time - c.t0 : rt), c.label, 'good');
       S.cue = null; scheduleCue();
     } else {
-      c.stepT = S.time; c.deadline = S.time + cueWindow()*0.9; partnerFor(c.seq[c.step]); sfx.blip();
+      c.stepT = S.time; c.deadline = S.time + cueWindow(c.seq[c.step])*0.9; partnerFor(c.seq[c.step]); sfx.blip();
       callout(SINGLE[c.seq[c.step]] ? SINGLE[c.seq[c.step]].label : 'Go behind', 'then', 'cue');
     }
   } else if (['sprawl','shot','snap','block'].includes(type)) {
@@ -1490,10 +1658,10 @@ function update(dt){
     const credit = inBand || !!S.action;
     S.R.work += dt; if (credit) S.R.inBand += dt;
     S.bandEMA += ((credit ? 1 : 0) - S.bandEMA)*Math.min(1, dt/6);
-    if (rd.phase === 'live') liveUpdate(dt); else drillUpdate(dt);
+    if (rd.phase === 'live') liveUpdate(dt); else if (rd.phase === 'hold') holdUpdate(dt); else drillUpdate(dt);
     if (S.level > BAND.hi + 0.02 && !S.action) S.hiT += dt; else S.hiT = 0;
     if (S.level < BAND.lo - 0.06 && !S.action) S.loT += dt; else S.loT = 0;
-    if (S.time - S.lastCorrection > 10) {
+    if (rd.phase !== 'hold' && S.time - S.lastCorrection > 10) {
       if (S.hiT > 1.4) coach('Stay under the bar.');
       else if (S.loT > 2.0) coach('Off the floor. Stay springy.');
       else if (rd.phase === 'live' && S.offAngle > 1.6) coach('Square up. Keep him centered.');
@@ -1758,7 +1926,7 @@ function updateTopBar(){
 /* ---------- debrief ---------- */
 const mean = a => a.length ? a.reduce((x, y) => x + y, 0)/a.length : null;
 function buildDebrief(){
-  const rs = S.rounds;
+  const rs = S.rounds.filter(r => r.phase !== 'hold');
   const work = rs.reduce((a, r) => a + r.work, 0), band = rs.reduce((a, r) => a + r.inBand, 0);
   const pct = Math.round(100*band/Math.max(work, 0.01));
   const reac = mean(rs.flatMap(r => r.reactions)), rec = mean(rs.flatMap(r => r.recoveries));
@@ -1772,7 +1940,7 @@ function buildDebrief(){
   const hits = rs.reduce((a, r) => a + r.hits, 0), misses = rs.reduce((a, r) => a + r.misses, 0);
   const goes = S.goes.map((gg, i) => `<div><span>Live go${S.goes.length > 1 ? ' ' + (i + 1) : ''}</span><span>You ${gg.you} · ${gg.opp} Opp</span></div>`).join('');
   $('debriefIn').innerHTML = `
-    <div><h2>Debrief</h2><div class="sub">${S.len}-minute plan · ${S.auto ? 'auto-play' : 'touch'} · ${settings.quick ? 'quick look' : 'full length'}</div></div>
+    <div><h2>Debrief</h2><div class="sub">${S.prog ? (S.prog.kind === 'session' ? 'Train me' : S.prog.kind === 'baseline' ? 'Baseline test' : 'Retest') + ' · camera' : `${S.len}-minute plan · ${S.auto ? 'auto-play' : S.cam ? 'camera' : 'touch'} · ${settings.quick ? 'quick look' : 'full length'}`}</div></div>
     <div class="big3">
       <div><b>${pct}%</b><span>time in stance</span></div>
       <div><b>${reac === null ? '–' : Math.round(reac*1000)}</b><span>reaction, ms</span></div>
@@ -1787,11 +1955,33 @@ function buildDebrief(){
       ${goes}
       <div><span>Explosive reps</span><span>${S.explosive} of ${S.cap} cap</span></div>
     </div></div>
+    ${trainDebrief()}
     <div class="actions"><button class="primary" id="againBtn">Run it again</button><button class="secondary" id="menuBtn">Change session</button></div>`;
   $('debrief').hidden = false; $('debrief').scrollTop = 0;
-  $('againBtn').onclick = () => startSession(S.auto, !!S.cam);
+  // camera play goes again with this session's calibration (the camera is still running)
+  $('againBtn').onclick = () => { const cam = !!S.cam; startSession(S.auto, cam); if (cam) startRound(); };
   $('menuBtn').onclick = quit;
   say(`Session done. In stance ${pct} percent.${reac === null ? '' : ' Reaction ' + Math.round(reac*1000) + ' milliseconds.'}`, true);
+}
+
+// The saved session's numbers for each move, your level and what the next session will be. Plain facts.
+function trainDebrief(){
+  const RT = globalThis.RoomTime, rec = S.savedRec;
+  if (!rec || !RT) return '';
+  const h = loadHistory(), lv = RT.levelOf(h), nx = RT.planNext(h, Date.now() + 18*3600e3, {minutes:settings.len});
+  const rows = RT.PROG.moves.filter(m => rec.moves[m] && rec.moves[m].n).map(m => {
+    const st = rec.moves[m];
+    return `<div><span>${RT.MOVE_NAMES[m][0].toUpperCase() + RT.MOVE_NAMES[m].slice(1)}</span><span>${Math.round(st.hitRate*100)}% of ${st.n}${st.rtMed != null ? ' · ' + Math.round(st.rtMed*1000) + ' ms' : ''}</span></div>`;
+  }).join('');
+  const t = nx.session || nx;
+  const next = nx.kind === 'session' ? `${nx.rounds.length} rounds of ${t.work} s, ${t.rest} s rest, cap ${t.cap}` : nx.kind === 'retest' ? 'retest' : 'baseline test';
+  return `<div class="card"><h3>Saved${rec.partial ? ' (ended early)' : ''}</h3><div class="rows">
+      ${rec.holdS != null ? `<div><span>Stance hold</span><span>${Math.round(rec.holdS)} s</span></div>` : ''}
+      ${rows}
+      ${rec.fakesBit ? `<div><span>Bit on fakes</span><span>${rec.fakesBit}</span></div>` : ''}
+      <div><span>Level</span><span>${lv.name}</span></div>
+      <div><span>Next session</span><span>${next}</span></div>
+    </div></div>`;
 }
 
 // A line on the menu when the 3D view can't run on this device, with the reason and the Safari version, so it can be fixed.
@@ -1806,7 +1996,12 @@ setTimeout(check3d, 8000);
 
 // read-only view of the game for the 3D layer and camera play
 globalThis.RoomTimeGame = {get S(){ return S; }, get settings(){ return settings; }, cueGlow:() => S ? cueGlow() : null, BAND, ACT,
-  start:startSession, camMove:(type, pre) => act(type === 'down_block' ? 'block' : type, pre), onQuit:null,
+  start:startSession, onQuit:null, history:loadHistory,
+  camMove:(type, pre, ev) => {
+    const t = type === 'down_block' ? 'block' : type;
+    if (ev && S && S.mode === 'work' && (t === 'shot' || t === 'sprawl') && ev.ms > 0) S.reps.push({r:S.r, speed:(ev.from - ev.to)/(ev.ms/1000)});
+    act(t, pre);
+  },
   begin:() => { if (S && S.mode === 'calib') startRound(); }};
 
 /* ---------- loop ---------- */
@@ -2256,7 +2451,12 @@ const POSE_INFO = {
 };
 const HOLD_MS = 3000, MIN_FRAMES = 5, FRAME_WAIT_MS = 20000, PASS_MS = FAST ? 6000 : 10000;
 // stance coaching before each stance hold: up to COACH_MS of one spoken fix at a time (RT.stanceCheck), then hold
-const COACH_MS = FAST ? 4000 : 15000, CUE_GAP_MS = 3500, SETTLE_OK_MS = 600;
+const COACH_MS = FAST ? 4000 : 8000, CUE_GAP_MS = 3500, SETTLE_OK_MS = 600;
+// a break to stand up between the stance holds, and before the shuffle
+const BREAK_MS = FAST ? 600 : 5000;
+// camera play's quick check: standing, then the floor, while the full calibration (the stance holds) is this recent
+// and from this camera and picture size
+const QUICK_DAYS = 14;
 const formNotes = {};   // per stance, the points still off when the hold began
 // the calibration's progress, on the Camera check status line and on the game screen in camera play
 function note(text){
@@ -2273,7 +2473,7 @@ L.cal = cal;
 async function captureSweep(){
   note('Calibrate: Floor');
   const edges = {};
-  for (const [side, name, line] of [[-1, 'left', 'Shuffle to your left in your stance, to your wall or until it beeps. Pause there.'],
+  for (const [side, name, line] of [[-1, 'left', 'Shuffle to your left, to your wall or until it beeps. Pause there.'],
                                     [1, 'right', 'Now all the way to your right, to your wall. Pause there.']]) {
     say(line); note('Floor: to your ' + name);
     if (!await wait(1200, 'cal')) return null;
@@ -2345,13 +2545,19 @@ async function calibrate(poses){
   if (!claim('cal')) return;
   const btn = $('calBtn'); btn.textContent = 'Stop'; btn.classList.add('on');
   // poses not redone keep their saved medians, and the walls stay unless swept again
-  const oldFloor = cal && cal.floor ? cal.floor : null, caps = {};
+  const oldFloor = cal && cal.floor ? cal.floor : null, oldFullAt = cal ? cal.fullAt || cal.at : null, caps = {};
   const oldForm = {square:cal && cal.square && cal.square.form, stagger:cal && cal.stagger && cal.stagger.form};
   for (const p of RT.POSES) caps[p] = cal && cal[p] ? [cal[p]] : [];
-  let got = 0;
+  let got = 0, prev = null;
   for (const p of poses) {
     // the stance coaching and the sweep measure against the standing capture, so keep the calibration current
     if (p !== 'stand' && caps.stand.length) setCal(caps);
+    // out of a stance hold, stand up for a few seconds first
+    if ((prev === 'square' || prev === 'stagger') && poses.length > 1) {
+      say('Stand up. Shake it out.'); note('Break');
+      if (!await wait(BREAK_MS, 'cal')) break;
+    }
+    prev = p;
     const g = await capturePose(p);
     if (cancelled.cal || !L.src) break;
     if (g) { caps[p] = g; got++; }
@@ -2361,6 +2567,8 @@ async function calibrate(poses){
     if (!caps.sweep && oldFloor) cal.floor = oldFloor;
     for (const k of ['square', 'stagger']) if (cal[k] && formNotes[k] && poses.includes(k)) cal[k].form = formNotes[k];
     for (const k of ['square', 'stagger']) if (cal[k] && !poses.includes(k) && oldForm[k]) cal[k].form = oldForm[k];
+    // when the stance holds were last done (a quick check keeps them)
+    cal.fullAt = poses.includes('square') && caps.square.length ? cal.at : oldFullAt;
     L.cal = cal; store.set('cal', cal);
     // what the camera measured, in feet
     const ft = mm => Math.round(mm*3.281);
@@ -2492,7 +2700,7 @@ L.on.add(f => {
   const eye = r.eye != null ? r.eye : r.headRatio != null ? 1.66*r.headRatio : null;
   if (eye != null) S.cam.head = {eye:play.fh.filter(eye, t), dx:play.fhx.filter(r.headX || 0, t), roll:0};
   const ev = play.det.push(RT.moveInput(f.t, f.m, r));
-  if (ev && S.mode === 'work') G.camMove(ev.type, ev.from);
+  if (ev && S.mode === 'work') G.camMove(ev.type, ev.from, ev);
 });
 // the warm-in's circling can widen the floor from the calibration's shuffle (it never narrows)
 L.on.add(f => {
@@ -2521,11 +2729,25 @@ async function startCamPlay(){
   await globalThis.RoomTimeLab.startCamera();
   if (!L.src) { play.on = false; dock(false); say('The camera did not start. Try Camera check.'); G.S.calibNote = 'The camera did not start'; return; }
   play.skipCal = false;
+  // a recent full calibration from this camera: just standing and the floor, about 30 seconds
+  for (let i = 0; i < 20 && !L.cur && play.on; i++) await wait(150);
+  const quick = quickCalOk();
+  if (quick) { say('Quick check. Your stance is saved from ' + quick + '.'); await wait(FAST ? 300 : 2500); }
   for (let tries = 0; tries < 2 && play.on && !play.skipCal; tries++) {
-    await calibrate([...RT.POSES, 'sweep']);
+    await calibrate(quick ? ['stand', 'sweep'] : [...RT.POSES, 'sweep']);
     if (cal && cal.stand && cal.square) break;
   }
   if (play.on && G.S && G.S.mode === 'calib') G.begin();
+}
+// a full calibration this recent, from this camera and picture size: when it was ('today', '3 days ago'), else null
+function quickCalOk(){
+  const c = cal, f = L.cur, at = c && Date.parse(c.fullAt || c.at);
+  if (!c || !c.stand || !c.square || !c.floor || !at) return null;
+  const days = Math.floor((Date.now() - at)/864e5);
+  if (days > QUICK_DAYS) return null;
+  if (c.w && f && (f.w !== c.w || f.h !== c.h)) return null;
+  if (c.camera && L.cam && L.cam.label && c.camera !== L.cam.label) return null;
+  return days < 1 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago';
 }
 globalThis.RoomTimeGame.skipCalib = () => { play.skipCal = true; cancelled.cal = true; };
 globalThis.RoomTimeGame.onQuit = () => { play.on = false; globalThis.RoomTimeLab.stopSource(); dock(false); };
