@@ -26,18 +26,25 @@ test('the first session after the test starts from your stance hold', () => {
   assert.ok(total > 10 * 60 && total < 17 * 60, 'about 15 minutes: ' + total);
 });
 
-test('stance holding: rounds get longer, then rest gets shorter', () => {
-  const h = [test0(0), sess(1, { stancePct: 0.86 }), sess(2, { stancePct: 0.84 }), sess(3, { stancePct: 0.88 })];
-  assert.equal(RT.planNext(h, T0 + 4 * DAY).work, 60);
-  const full = [test0(0), sess(1, { work: 120, rest: 40, stancePct: 0.86 }), sess(2, { work: 120, rest: 40, stancePct: 0.9 }), sess(3, { work: 120, rest: 40, stancePct: 0.88 })];
-  const p = RT.planNext(full, T0 + 4 * DAY);
+test('stance holding: rounds get longer, then rest gets shorter, one step a week at most', () => {
+  const h = [test0(0), sess(1, { stancePct: 0.86 }), sess(4, { stancePct: 0.84 }), sess(7, { stancePct: 0.88 })];
+  assert.equal(RT.planNext(h, T0 + 8 * DAY).work, 60);
+  const soon = [test0(0), sess(1, { stancePct: 0.86 }), sess(2, { stancePct: 0.84 }), sess(3, { stancePct: 0.88 })];
+  const q = RT.planNext(soon, T0 + 4 * DAY);
+  assert.equal(q.work, 45, 'three sessions in three days: not yet');
+  assert.ok(q.why.some((x) => /next step comes after 3 more days/.test(x)), q.why.join(' | '));
+  const full = [test0(0), sess(1, { work: 120, rest: 40, stancePct: 0.86 }), sess(4, { work: 120, rest: 40, stancePct: 0.9 }), sess(7, { work: 120, rest: 40, stancePct: 0.88 })];
+  const p = RT.planNext(full, T0 + 8 * DAY);
   assert.equal(p.work, 120); assert.equal(p.rest, 35);
+  // the step resets the clock: the session after a step up stays put
+  const stepped = [...h, sess(8, { work: 60, stancePct: 0.9 })];
+  assert.equal(RT.planNext(stepped, T0 + 9 * DAY).work, 60);
 });
 
 test('one bad day alone moves nothing; a low trend adds rest', () => {
   const good = [0.84, 0.86, 0.85, 0.87, 0.85];
-  const h = [test0(0), ...good.map((v, i) => sess(i + 1, { stancePct: v })), sess(6, { stancePct: 0.55 })];
-  const p = RT.planNext(h, T0 + 7 * DAY);
+  const h = [test0(0), ...good.map((v, i) => sess(2 * i + 1, { stancePct: v })), sess(11, { stancePct: 0.55 })];
+  const p = RT.planNext(h, T0 + 12 * DAY);
   assert.equal(p.work, 45, 'no progress after a bad day'); assert.equal(p.rest, 45, 'and no back-off either');
   const low = [test0(0), sess(1, { stancePct: 0.5 }), sess(2, { stancePct: 0.55 }), sess(3, { stancePct: 0.52 })];
   assert.equal(RT.planNext(low, T0 + 4 * DAY).rest, 55);
@@ -51,10 +58,11 @@ test('a downward trend against the last four weeks is a deload', () => {
   assert.ok(p.cap < 16 && p.work < 45);
 });
 
-test('every 8 sessions after a test, a retest', () => {
-  const h = [test0(0), ...Array.from({ length: 8 }, (_, i) => sess(i + 1))];
-  assert.equal(RT.planNext(h, T0 + 10 * DAY).kind, 'retest');
-  assert.equal(RT.planNext(h.slice(0, 8), T0 + 10 * DAY).kind, 'session');
+test('a retest every 4 weeks, after at least 6 sessions', () => {
+  const h = [test0(0), ...Array.from({ length: 6 }, (_, i) => sess(4 * i + 1))];
+  assert.equal(RT.planNext(h, T0 + 28 * DAY).kind, 'retest');
+  assert.equal(RT.planNext(h, T0 + 26 * DAY).kind, 'session', 'not before 4 weeks');
+  assert.equal(RT.planNext(h.slice(0, 6), T0 + 28 * DAY).kind, 'session', 'not before 6 sessions');
 });
 
 test('explosive cap: down when your last round fades, up once a week when it holds', () => {
@@ -72,7 +80,7 @@ test('the staircase settles where you make about three in four', () => {
   const trials = [], ws = []; let w = RT.PROG.window0;
   for (let i = 0; i < 600; i++) {
     const h = rnd() < 1 / (1 + Math.exp(-(w - 0.8) / 0.08));
-    trials.push({ m: 'sprawl', h, rt: 0.4 });
+    trials.push({ m: 'sprawl', h, rt: 0.4, w });
     w = RT.staircase(trials).sprawl; ws.push(w);
   }
   const rate = trials.slice(200).filter((t) => t.h).length / 400;
@@ -83,12 +91,53 @@ test('the staircase settles where you make about three in four', () => {
 });
 
 test('every rep counts across sessions, and the weakest move gets more calls', () => {
-  const t = (m, h, n) => Array.from({ length: n }, () => ({ m, h, rt: 0.4 }));
+  // the staircase as the game runs it: each call at the window it was given, which then steps
+  const P = RT.PROG, w = { sprawl: 1.25, snap: 1.25 };
+  const t = (m, h, n) => Array.from({ length: n }, () => { const x = { m, h, rt: h ? 0.4 : null, w: w[m] }; w[m] = Math.min(P.wMax, Math.max(P.wMin, w[m] * (h ? P.hitStep : P.missStep))); return x; });
   const h = [test0(0), sess(1, { trials: [...t('sprawl', true, 10), ...t('snap', false, 4)] }), sess(2, { trials: [...t('snap', true, 2), ...t('snap', false, 4)] })];
   const p = RT.planNext(h, T0 + 3 * DAY);
   assert.equal(p.weak, 'snap');
-  assert.ok(p.windows.sprawl < RT.PROG.window0 && p.windows.snap > RT.PROG.window0);
+  assert.ok(Math.abs(p.windows.sprawl - w.sprawl) < 1e-9 && Math.abs(p.windows.snap - w.snap) < 1e-9, 'the next session carries on from the last call');
+  assert.ok(p.windows.sprawl < P.window0 && p.windows.snap > P.window0);
   assert.ok(p.why.some((x) => /snaps/.test(x)));
+});
+
+test('after the baseline, each move starts from your test reads', () => {
+  const tr = [0.5, 0.6, 0.7, 0.55, 0.65].map((rt) => ({ m: 'sprawl', h: true, rt }));
+  const p = RT.planNext([{ ...test0(0), trials: tr }], T0 + DAY);
+  assert.ok(Math.abs(p.windows.sprawl - 0.6 * 1.33) < 1e-9, 'median read 0.6 s plus a third: ' + p.windows.sprawl);
+  assert.equal(p.windows.snap, RT.PROG.window0, 'no reads of a move: the default');
+});
+
+test('a simulated season: an improving player grows to the goal, a flat one holds', () => {
+  const run = (improve) => {
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const g = () => Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(2 * Math.PI * rnd());
+    const P = RT.PROG, h = [], plans = [];
+    for (let wk = 0; wk < 12; wk++) for (let d = 0; d < 5; d++) {
+      const now = T0 + (wk * 7 + d) * DAY, fit = improve ? wk / 10 : 0;
+      const p = RT.planNext(h, now, { minutes: 15 }), s = p.session || p, win = { ...s.windows }, trials = [];
+      for (const rd of p.rounds) if (rd.phase === 'tech' || rd.phase === 'sit' || rd.phase === 'react') for (let k = 0; k < 4; k++) for (const m of P.moves) {
+        const rt = 0.95 - 0.25 * fit + 0.18 * g(), test = p.kind !== 'session', ww = test ? P.testWindow : win[m], hit = rt < ww;
+        const x = { m, h: hit, rt: hit ? rt : null };
+        if (!test) { x.w = ww / (s.ease || 1); win[m] *= hit ? P.hitStep : P.missStep; }
+        trials.push(x);
+      }
+      const cap = 45 + 120 * fit;
+      const stance = Math.max(0.4, Math.min(0.92, 0.72 + 0.15 * fit - 0.25 * Math.max(0, s.work - cap) / 60 + 0.04 * g()));
+      h.push({ date: new Date(now).toISOString(), mode: 'train', kind: p.kind, minutes: 15, work: p.work, rest: p.rest, cap: p.cap,
+        rounds: p.rounds.map((r) => ({ phase: r.phase })), stancePct: stance, trials, holdS: p.kind !== 'session' ? cap : null, speed: { first: 1, last: 0.9 } });
+      if (p.kind === 'session') plans.push(p);
+    }
+    return plans;
+  };
+  const up = run(true), flat = run(false);
+  const steps = up.slice(1).filter((p, i) => p.work !== up[i].work || p.rest !== up[i].rest).length;
+  assert.ok(up[up.length - 1].work === 120, 'reaches 2:00 rounds in 12 weeks: ' + up.map((p) => p.work).join());
+  assert.ok(steps <= 12, 'about one step a week: ' + steps);
+  assert.ok(flat.every((p) => p.work === 30), 'a flat player stays at 30 s rounds: ' + [...new Set(flat.map((p) => p.work))].join());
+  const lastWin = up[up.length - 1].windows.sprawl;
+  assert.ok(lastWin > 0.75 && lastWin < 0.95, 'reads follow the improving player (74% point about 0.81 s): ' + lastWin.toFixed(2));
 });
 
 test('records and CSV', () => {

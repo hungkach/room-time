@@ -693,8 +693,10 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     // reaction windows (s): a weighted up-down staircase, every rep of a move moves its window. A hit shortens it 3%,
     // a miss lengthens it 9%, which settles where you make about 74% (hit share p where p ln 0.97 + (1 - p) ln 1.09 = 0)
     window0:1.25, wMin:0.45, wMax:2.0, hitStep:0.97, missStep:1.09, testWindow:1.6,
-    halfLifeDays:14, retestEvery:8, holdCap:180, breakS:2,
-    progressAt:0.80, last3At:0.75, backOffAt:0.60, deloadRatio:0.9, deloadEase:1.15,
+    halfLifeDays:14, retestDays:28, retestMin:6, holdCap:180, breakS:2,
+    // a step up (15 s more work, or 5 s less rest) needs stance held at progressAt, no session of the last 3 under
+    // last3At, and the plan settled at these rounds for stepSessions sessions over stepDays days: about one step a week
+    progressAt:0.75, last3At:0.70, stepSessions:3, stepDays:6, backOffAt:0.60, deloadRatio:0.9, deloadEase:1.15,
     workStep:15, restStep:5, restBack:10, workMin:30, workMax:120, restMin:30, restMax:75,
     cap0:16, capStep:2, capMin:8, capMax:40, speedKeep:0.9, speedDrop:0.8, totalS:15*60,
     // recent history: back after days off, several days in a row, a second session the same day, a long layoff
@@ -723,10 +725,21 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   const pct = v => Math.round(v*100) + '%';
   RT.MOVE_NAMES = {sprawl:'sprawls', block:'down blocks', shot:'shots', snap:'snaps', level:'level changes', circle:'circling'};
 
+  // The staircase runs live in each training session: every call is given at the move's window (t.w, saved with the
+  // call) and moves it one step. So every call ever carries into the next: the window after your last call of a move.
+  // A move with no staircase calls yet (only the test's, at its fixed window) starts from your median read in the test
+  // plus a third, which is about where you make three in four.
   RT.staircase = function(trials){
-    const P = RT.PROG, w = {};
-    for (const m of P.moves) w[m] = P.window0;
-    for (const t of trials || []) if (w[t.m] != null) w[t.m] = clampN(w[t.m]*(t.h ? P.hitStep : P.missStep), P.wMin, P.wMax);
+    const P = RT.PROG, w = {}, last = {}, test = {};
+    for (const t of trials || []) {
+      if (!P.moves.includes(t.m)) continue;
+      if (num(t.w)) last[t.m] = t; else (test[t.m] = test[t.m] || []).push(t);
+    }
+    for (const m of P.moves) {
+      const t = last[m], hits = (test[m] || []).filter(x => x.h && num(x.rt)).map(x => x.rt);
+      w[m] = t ? clampN(t.w*(t.h ? P.hitStep : P.missStep), P.wMin, P.wMax)
+        : hits.length >= 3 ? clampN(RT.median(hits)*1.33, P.wMin, P.wMax) : P.window0;
+    }
     return w;
   };
   // Average with recent points counting most: a point's weight halves every halfLifeDays.
@@ -784,7 +797,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     const lastTest = tests[tests.length - 1];
     const sessions = done.filter(s => s.kind === 'session');
     const lastAny = done[done.length - 1], daysOff = (now - Date.parse(lastAny.date))/DAY;
-    if (sessions.filter(s => Date.parse(s.date) > Date.parse(lastTest.date)).length >= P.retestEvery) return RT.testPlan('retest', fast);
+    if (sessions.filter(s => Date.parse(s.date) > Date.parse(lastTest.date)).length >= P.retestMin && now - Date.parse(lastTest.date) >= P.retestDays*DAY) return RT.testPlan('retest', fast);
     if (daysOff >= P.layoffRetest) { const t = RT.testPlan('retest', fast); t.why.unshift(`${Math.floor(daysOff)} days since your last session: retest first.`); return t; }
     const trials = done.flatMap(s => s.trials || []);
     const windows = RT.staircase(trials), why = [];
@@ -794,18 +807,28 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     let cap = last && num(last.cap) ? last.cap : P.cap0;
     if (!last) why.push(`Your test: stance held ${Math.round(lastTest.holdS)} s, so rounds start at ${fmtS(work)} with ${fmtS(rest)} rest.`);
 
-    // stance: the trend over all sessions (recent ones count most), the last 3, and the last 4 weeks
-    const pts = done.filter(s => num(s.stancePct)).map(s => ({t:Date.parse(s.date), v:s.stancePct}));
+    // stance: the trend over every training session (recent ones count most; tests are their own thing), the last 3,
+    // and the last 4 weeks
+    const train = done.filter(s => s.kind === 'session' || s.kind === 'free');
+    const pts = train.filter(s => num(s.stancePct)).map(s => ({t:Date.parse(s.date), v:s.stancePct}));
     const trend = RT.weightedAvg(pts, now, P.halfLifeDays);
-    const last3 = done.slice(-3).map(s => s.stancePct).filter(num);
+    const last3 = train.slice(-3).map(s => s.stancePct).filter(num);
+    // how long the plan has sat at these rounds
+    let steady = 0, since = last;
+    for (let i = sessions.length - 1; i >= 0 && sessions[i].work === work && sessions[i].rest === rest; i--) { steady++; since = sessions[i]; }
+    const settled = !!last && steady >= P.stepSessions && now - Date.parse(since.date) >= P.stepDays*DAY;
     const older = pts.slice(0, -3).filter(p => now - p.t <= 28*DAY).map(p => p.v);
     let deload = false;
-    if (last && last3.length === 3 && older.length >= 3 && mean(last3) < P.deloadRatio*mean(older)) {
+    // (the middle of the last 3, so one bad day is not a trend)
+    if (last && last3.length === 3 && older.length >= 3 && RT.median(last3) < P.deloadRatio*mean(older)) {
       deload = true;
-      why.push(`Stance ${pct(mean(last3))} over your last 3 sessions against ${pct(mean(older))} before that: an easier session.`);
-    } else if (last && num(trend) && trend >= P.progressAt && last3.length && Math.min(...last3) >= P.last3At) {
-      if (work < P.workMax) { work += P.workStep; why.push(`Stance holding at ${pct(trend)}: rounds go up to ${fmtS(work)}.`); }
-      else if (rest > P.restMin) { rest -= P.restStep; why.push(`Stance holding at ${pct(trend)} in full rounds: rest down to ${fmtS(rest)}.`); }
+      why.push(`Stance ${pct(RT.median(last3))} over your last 3 sessions against ${pct(mean(older))} before that: an easier session.`);
+    } else if (last && num(trend) && trend >= P.progressAt && last3.length && Math.min(...last3) >= P.last3At && (work < P.workMax || rest > P.restMin)) {
+      if (!settled) {
+        const left = Math.max(P.stepSessions - steady, 0), days = Math.max(0, Math.ceil(P.stepDays - (now - Date.parse(since.date))/DAY));
+        why.push(`Stance at ${pct(trend)}: same rounds; the next step comes after ${left > 0 ? left + ' more session' + (left > 1 ? 's' : '') : ''}${left > 0 && days > 0 ? ' and ' : ''}${days > 0 ? days + ' more day' + (days > 1 ? 's' : '') : ''} like this.`);
+      } else if (work < P.workMax) { work += P.workStep; why.push(`Stance held at ${pct(trend)} over ${steady} sessions: rounds go up to ${fmtS(work)}.`); }
+      else { rest -= P.restStep; why.push(`Stance held at ${pct(trend)} in full rounds: rest down to ${fmtS(rest)}.`); }
     } else if (last && num(trend) && trend < P.backOffAt) {
       rest = Math.min(P.restMax, rest + P.restBack);
       why.push(`Stance at ${pct(trend)}: more rest, ${fmtS(rest)}, same rounds.`);
@@ -825,12 +848,12 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     const dayKey = t => new Date(t).toISOString().slice(0, 10);
     const today = dayKey(now), days = new Set(done.map(s => dayKey(Date.parse(s.date))));
     let streak = 0; for (let d = now - DAY; days.has(dayKey(d)); d -= DAY) streak++;
-    let session = {work, rest, cap, windows:Object.assign({}, windows)};
+    let session = {work, rest, cap, windows:Object.assign({}, windows), ease:1};
     if (days.has(today)) {
-      session.cap = Math.round(cap*0.5); for (const m of P.moves) session.windows[m] = Math.min(P.wMax, windows[m]*1.1);
+      session.cap = Math.round(cap*0.5); session.ease = 1.1; for (const m of P.moves) session.windows[m] = Math.min(P.wMax, windows[m]*1.1);
       why.push('Second session today: half the explosive cap, easier reads.');
     } else if (daysOff >= P.daysOffEase) {
-      session.work = Math.max(P.workMin, work - P.workStep); session.cap = Math.round(cap*0.8);
+      session.work = Math.max(P.workMin, work - P.workStep); session.cap = Math.round(cap*0.8); session.ease = 1.1;
       for (const m of P.moves) session.windows[m] = Math.min(P.wMax, windows[m]*1.1);
       why.push(`Back after ${Math.floor(daysOff)} days: shorter rounds and easier reads this time.`);
     } else if (streak + 1 >= P.streakLight) {
@@ -1282,9 +1305,19 @@ function progPace(w){
   const base = PACE.match, k = v => v/RoomTime.PROG.window0;
   return Object.assign({}, base, {tell:base.tell*k(w.sprawl), opening:base.opening*k(w.shot), handK:k(w.snap), win:base.win});
 }
-function recordMove(m, hit, rt){
+// stair: a coach's call in a drill round, given at this move's window. In a Train me session (not the warm-in) the
+// window steps after it, a hit 3% shorter, a miss 9% longer, and the call keeps the window it was given at
+// (without today's ease) so the next session carries on from here.
+function recordMove(m, hit, rt, stair){
   if (!S || S.auto) return;
-  S.trials.push({m:moveKey(m), h:!!hit, rt:hit && rt != null ? Math.round(rt*1000)/1000 : null});
+  const k = moveKey(m), t = {m:k, h:!!hit, rt:hit && rt != null ? Math.round(rt*1000)/1000 : null};
+  const P = globalThis.RoomTime.PROG, ph = S.plan[S.r] && S.plan[S.r].phase;
+  if (stair && S.prog && S.prog.kind === 'session' && S.windows && ph !== 'warm') {
+    const ease = (S.prog.session && S.prog.session.ease) || 1;
+    t.w = Math.round(1000*S.windows[k]/ease)/1000;
+    S.windows[k] = clamp(S.windows[k]*(hit ? P.hitStep : P.missStep), P.wMin*ease, P.wMax*ease);
+  }
+  S.trials.push(t);
 }
 function loadHistory(){ try { return JSON.parse(localStorage.getItem('roomtime.history') || '[]') || []; } catch(e) { return []; } }
 function saveSession(partial){
@@ -1497,7 +1530,7 @@ function scheduleCue(){
   S.nextCueAt = S.time + g;
 }
 function missCue(reason){
-  if (S.cue) recordMove(S.cue.seq[S.cue.step], false);
+  if (S.cue) recordMove(S.cue.seq[S.cue.step], false, null, true);
   S.R.misses++; callout(reason, S.cue ? S.cue.label : '', 'miss'); sfx.miss(); S.cue = null; scheduleCue();
 }
 function drillUpdate(dt){
@@ -1514,7 +1547,7 @@ function drillInput(type){
   if (ok) {
     const rt = S.time - c.stepT;
     if (c.step === 0) S.R.reactions.push(rt);
-    recordMove(need, true, rt);
+    recordMove(need, true, rt, true);
     c.step++;
     if (c.step >= c.seq.length) {
       S.R.hits++; sfx.blip();
