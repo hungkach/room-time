@@ -194,11 +194,15 @@ try {
   // play a few rounds, then skip through the rest (game time runs slow at 2 fps here)
   await pose(POSE['Square stance']);
   await page.waitForFunction(() => RoomTimeGame.S.trials.length >= 1, null, { timeout: 120000 }).catch(() => {});
+  // (count the warm-in as 20 s in, past the 10 s it needs to be measured)
+  await page.evaluate(() => { const S = RoomTimeGame.S; if (S.R.phase === 'warm') { S.R.work = Math.max(S.R.work, 20); S.R.inBand = Math.max(S.R.inBand, 16); } });
   for (let i = 0; i < 40 && await page.evaluate(() => RoomTimeGame.S && RoomTimeGame.S.mode !== 'done'); i++) { await page.click('#skipBtn'); await page.waitForTimeout(250); }
   hist = await page.evaluate(() => JSON.parse(localStorage.getItem('roomtime.history') || '[]'));
   const b = hist[1] || {};
   check(hist.length === 2 && b.kind === 'session' && b.day === 'technique' && !b.partial && b.rounds.length === prog.n && b.rounds.every((r) => typeof r.work === 'number') && b.load > 0,
     `the session is saved round by round: ${b.rounds && b.rounds.length} rounds, load ${b.load}, ${b.trials && b.trials.length} calls`);
+  check(b.warm && typeof b.warm.stance === 'number' && b.readiness && /compares against your own after 3 sessions/.test(b.readiness.text),
+    'the warm-in is measured and saved: ' + JSON.stringify(b.warm) + ' · ' + (b.readiness && b.readiness.text));
   check(/Saved/.test(await page.textContent('#debriefIn')) && /Next session/.test(await page.textContent('#debriefIn')), 'the debrief shows the saved numbers and the next session');
   await page.click('#menuBtn'); await page.waitForTimeout(300);
   check(/^Today: Technique day/.test(await page.textContent('#trainSum')) && /Session 3 today/.test(await page.textContent('#trainWhy')), 'a third session today is planned around the first two: ' + await page.textContent('#trainSum'));

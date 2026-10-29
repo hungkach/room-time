@@ -107,6 +107,30 @@ test('mid-session: a hard round shortens what is left, a strong one lengthens it
   assert.ok(tight.rest >= RT.PROG.restMin, 'rest never under the minimum');
 });
 
+test('the warm-in: today against your own recent warm-ins', () => {
+  const w = (d, stance, rt, low) => sess(d, { warm: { stance, rt, low } });
+  const h = [w(0, 0.8, 0.9, 0.3), w(1, 0.82, 0.88, 0.3), w(2, 0.78, 0.92, 0.32), w(3, 0.8, 0.9, 0.3)];
+  const now = T0 + 4 * DAY;
+  assert.equal(RT.warmReadiness({ stance: 0.8, rt: 0.9, low: 0.3 }, h.slice(0, 2), now).k, 1, 'fewer than 3 warm-ins: nothing to compare');
+  const usual = RT.warmReadiness({ stance: 0.79, rt: 0.91, low: 0.3 }, h, now);
+  assert.equal(usual.k, 1); assert.ok(/about your usual/.test(usual.text));
+  const tired = RT.warmReadiness({ stance: 0.6, rt: 1.05, low: 0.38 }, h, now);
+  assert.ok(tired.k < 1 && tired.k >= 0.75, 'k ' + tired.k.toFixed(2));
+  assert.ok(/stance 25% under your usual\. Rounds shortened/.test(tired.text), tired.text);
+  const sharp = RT.warmReadiness({ stance: 0.92, rt: 0.8, low: 0.26 }, h, now);
+  assert.equal(sharp.k, 1.05); assert.ok(/over your usual/.test(sharp.text), sharp.text);
+  assert.equal(RT.warmReadiness(null, h, now).k, 1);
+});
+
+test('scaling the rounds left keeps the end time', () => {
+  const up = [{ phase: 'tech', work: 40, rest: 40 }, { phase: 'hold', work: 90, rest: 40 }, { phase: 'live', work: 40, rest: 40, period: 1 }, { phase: 'live', work: 40, rest: 15, period: 2 }];
+  const down = RT.scaleRounds(up, 0.8), upk = RT.scaleRounds(up, 1.05);
+  down.forEach((r, i) => assert.equal(r.work + r.rest, up[i].work + up[i].rest));
+  assert.equal(down[0].work, 30); assert.equal(down[1].work, 90, 'a hold is never scaled');
+  assert.equal(upk[3].work, 40, 'no room in a 15 s break: stays');
+  assert.ok(upk[0].work >= 40);
+});
+
 test('explosive tolerance: reps until the speed fades', () => {
   const fade = [1, 1, 1, 0.98, 0.96, 0.95, 0.9, 0.85, 0.78, 0.75, 0.7];
   assert.equal(RT.explosiveTol(fade), 8); assert.equal(RT.speedHolding(fade), false);

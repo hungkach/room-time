@@ -1029,6 +1029,44 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       text:`Goal ${G.minutes} min at Hard pace: stance capacity ${fmtS(st.cap)} of ${fmtS(G.work)}, reads ${q.readWindow.toFixed(2)} s of ${G.window.toFixed(2)} s, explosive ${Math.round(st.tol)} of ${G.tol} reps.`};
   };
 
+  // Today's warm-in against your recent ones: how much of it you held your stance, how fast you read the calls, and
+  // how low your level changes went. Your own numbers, recent warm-ins counting most; needs 3 before it says anything.
+  // warm: {stance (share), rt (median read, s), low (lowest level)}. Returns {r (-1 to 1, 0 = your usual), k (what the
+  // rest of the session's work is scaled by), parts, text}.
+  RT.warmReadiness = function(warm, history, now){
+    const out = {r:0, k:1, parts:[], text:''};
+    if (!warm) return out;
+    const past = (history || []).filter(s => s && s.warm && Date.parse(s.date) < now).slice(-10);
+    if (past.length < 3) { out.text = 'Warm-in saved; it compares against your own after 3 sessions.'; return out; }
+    const base = k => RT.weightedAvg(past.filter(s => num(s.warm[k])).map(s => ({t:Date.parse(s.date), v:s.warm[k]})), now, RT.PROG.capHalfLife);
+    const parts = [];
+    const bs = base('stance'), br = base('rt'), bl = base('low');
+    if (num(warm.stance) && num(bs) && bs > 0.2) parts.push({k:'stance', w:0.5, v:(warm.stance - bs)/bs});
+    if (num(warm.rt) && num(br) && br > 0.1) parts.push({k:'reads', w:0.3, v:(br - warm.rt)/br});
+    // depth: how far below standing (1) the level changes went
+    if (num(warm.low) && num(bl) && bl < 0.95) parts.push({k:'level changes', w:0.2, v:((1 - warm.low) - (1 - bl))/(1 - bl)});
+    if (!parts.length) return out;
+    const ws = parts.reduce((a, p) => a + p.w, 0), r = clampN(parts.reduce((a, p) => a + p.w*p.v, 0)/ws, -1, 1);
+    out.r = r; out.parts = parts;
+    const worst = parts.slice().sort((a, b) => a.v - b.v)[0], best = parts.slice().sort((a, b) => b.v - a.v)[0];
+    const say = p => `${p.k} ${Math.abs(Math.round(p.v*100))}% ${p.v < 0 ? 'under' : 'over'} your usual`;
+    if (r <= -0.08) { out.k = clampN(1 + r, 0.75, 0.92); out.text = `Warm-in: ${say(worst)}. Rounds shortened, more rest, fewer explosive reps.`; }
+    else if (r >= 0.08) { out.k = 1.05; out.text = `Warm-in: ${say(best)}. Rounds a little longer.`; }
+    else out.text = 'Warm-in: about your usual. Rounds as planned.';
+    return out;
+  };
+  // Scale the work of the rounds still to come by k, the rest taking up the difference (the end time holds).
+  RT.scaleRounds = function(upcoming, k){
+    const P = RT.PROG;
+    return upcoming.map(x => {
+      if (x.phase === 'warm' || x.phase === 'hold' || !num(x.work)) return x;
+      const restMin = x.phase === 'live' && x.period > 1 ? 15 : P.restMin;
+      const max = Math.min(x.phase === 'live' ? P.liveMax : P.capMax, x.work + Math.max(0, (x.rest || 0) - restMin));
+      const w = Math.min(max, Math.round(clampN(x.work*k, P.capMin, max)/5)*5);
+      return Object.assign({}, x, {work:w, rest:(x.rest || 0) + x.work - w});
+    });
+  };
+
   // Mid-session: what the round just done says, applied to the rounds still to come. Each round keeps its work plus
   // the rest before it, so the session still ends on time: shorter work gets longer rest, and the other way.
   // On a light day (technique) rounds only ever shorten.
@@ -1411,7 +1449,7 @@ function roundBlurb(rd){
 function startRound(){
   const rd = S.plan[S.r];
   S.mode = 'work'; S.clock = rd.work || S.workDur;
-  S.R = {phase:rd.phase, work:0, inBand:0, reactions:[], recoveries:[], hits:0, misses:0, outT:0, breakT:null};
+  S.R = {phase:rd.phase, work:0, inBand:0, reactions:[], recoveries:[], hits:0, misses:0, outT:0, breakT:null, low:null};
   S.hold = {t:0, wait:0, inT:0, broke:0, started:false};
   S.cue = null; S.nextCueAt = S.time + 2.0; S.lastMoveT = S.time; S.hiT = 0; S.loT = 0; S.offAngle = 0;
   S.lastCorrection = S.time - 6; S.bot.q = [];
@@ -1436,8 +1474,16 @@ function endWork(){
   S.rounds.push(R); S.cue = null; S.action = null; S.recoverFrom = null;
   if (rd.phase === 'live' && rd.period === rd.periods) S.goes.push({you:S.score.you, opp:S.score.opp});
   if (S.r >= S.plan.length - 1) { finish(); return; }
-  // Train me: what this round says re-tunes the rounds still to come (same end time)
-  if (S.prog && !FASTQ) {
+  // Train me: the warm-in says how you're moving today against your usual; every round after re-tunes the rounds
+  // still to come (same end time)
+  if (S.prog && rd.phase === 'warm') {
+    const rr = RoomTime.warmReadiness(warmRecord(), loadHistory(), Date.now());
+    S.readiness = rr;
+    if (rr.k !== 1) {
+      S.plan = S.plan.slice(0, S.r + 1).concat(RoomTime.scaleRounds(S.plan.slice(S.r + 1), rr.k));
+      if (rr.k < 1) S.cap = Math.max(RoomTime.PROG.tolMin, Math.min(S.cap, Math.round(S.cap*rr.k)));
+    }
+  } else if (S.prog && !FASTQ) {
     const ad = RoomTime.adaptRound(roundRecord(R), S.plan.slice(S.r + 1), S.prog.day);
     S.plan = S.plan.slice(0, S.r + 1).concat(ad.rounds);
   }
@@ -1455,6 +1501,9 @@ function endWork(){
     const tot = R.hits + R.misses;
     shown = `In stance ${pct}% · ${R.hits} of ${tot} on time`;
     spoken = `In stance ${pct} percent. ${R.hits} of ${tot} on time.`;
+  }
+  if (rd.phase === 'warm' && S.readiness && S.readiness.text && S.readiness.parts.length) {
+    shown = S.readiness.text; spoken = S.readiness.k < 1 ? 'Under your usual today. Rounds shortened.' : S.readiness.k > 1 ? 'Over your usual today. Rounds a little longer.' : spoken;
   }
   S.restNote = shown;
   setOpp('rest', 999);
@@ -1505,7 +1554,15 @@ function recordMove(m, hit, rt, stair){
     t.w = Math.round(1000*S.windows[k]/ease)/1000;
     S.windows[k] = clamp(S.windows[k]*(hit ? P.hitStep : P.missStep), P.wMin*ease, P.wMax*ease);
   }
+  if (ph === 'warm') t.wu = 1;
   S.trials.push(t);
+}
+// the warm-in's numbers, for today's readiness and for later ones to compare against
+function warmRecord(){
+  const R = S.rounds.find(r => r.phase === 'warm');
+  if (!R || R.work < 10) return null;
+  const rts = S.trials.filter(t => t.wu && t.h && t.rt != null).map(t => t.rt);
+  return {stance:Math.round(1000*R.inBand/R.work)/1000, rt:rts.length >= 2 ? RoomTime.median(rts) : null, low:R.low == null ? null : Math.round(R.low*1000)/1000};
 }
 // a round as saved: how long it ran, the share in stance, when the stance broke, a hold's time
 function roundRecord(R){
@@ -1539,6 +1596,7 @@ function saveSession(partial){
     stancePct:sum(play, r => r.work) ? sum(play, r => r.inBand)/sum(play, r => r.work) : null,
     holdS:hold ? hold.holdS : null, moves:RT.moveStats(S.trials), trials:S.trials,
     speed:{first:withReps.length >= 3 ? speedIn(withReps.slice(0, 2)) : null, last:withReps.length >= 3 ? speedIn(withReps.slice(-2)) : null},
+    warm:warmRecord(), readiness:S.readiness ? {r:Math.round(S.readiness.r*1000)/1000, k:S.readiness.k, text:S.readiness.text} : null,
     explosive:S.explosive, explosiveTol:RT.explosiveTol(speeds), tolOpen:RT.speedHolding(speeds),
     score:S.goes.length ? S.goes[S.goes.length - 1] : null, fakesBit:S.fakesBit
   };
@@ -1931,6 +1989,7 @@ function update(dt){
   if (S.mode === 'work') {
     const credit = inBand || !!S.action;
     S.R.work += dt; if (credit) S.R.inBand += dt;
+    if (S.R.low == null || S.level < S.R.low) S.R.low = S.level;
     // when the stance first broke and stayed broken (3 s out of the band)
     S.R.outT = credit ? 0 : S.R.outT + dt;
     if (S.R.breakT == null && S.R.outT >= RoomTime.PROG.breakRoundS && rd.phase !== 'hold') S.R.breakT = Math.max(0, S.R.work - S.R.outT);
@@ -2301,6 +2360,7 @@ function trainDebrief(){
   const next = `${nx.dayName}, ${nx.rounds.length} rounds of ${sec(nx.work)}, ${sec(nx.rest)} rest`;
   return `<div class="card"><h3>Saved${rec.partial ? ' (ended early)' : ''}</h3><div class="rows">
       ${holdR && holdR.hold != null ? `<div><span>Stance hold</span><span>${Math.round(holdR.hold)} s</span></div>` : ''}
+      ${rec.readiness && rec.readiness.text ? `<div><span>Today</span><span>${rec.readiness.text.replace(/^Warm-in: /, '')}</span></div>` : ''}
       ${rows}
       ${rec.explosive ? `<div><span>Shots and sprawls</span><span>${rec.explosive}${rec.tolOpen ? ', speed held' : ', speed faded after ' + rec.explosiveTol}</span></div>` : ''}
       ${rec.fakesBit ? `<div><span>Bit on fakes</span><span>${rec.fakesBit}</span></div>` : ''}
