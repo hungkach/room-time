@@ -1,7 +1,7 @@
 // Headless check of the camera check screen in Chromium with a fake camera (no person in it).
 // MediaPipe and the models come from $MP_DIR (see fetch-mediapipe.sh), so it runs offline from jsdelivr.
 // The real model loads and runs on the fake camera; then the landmarker is swapped for the synthetic
-// figure (test/helpers/figure.mjs), posed per spoken cue, to run calibration, readouts and recording.
+// figure (test/helpers/figure.mjs), posed per spoken cue, to run calibration, readouts and camera play.
 // Usage: MP_DIR=/some/dir node test/browser/check.mjs   (about two minutes; ?fast shortens bench and soak)
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -121,10 +121,8 @@ try {
   r = await live({ ...POSE['Square stance'], x: 1.0 }); check(Math.abs(r.floorX + 1) < 0.08, 'your left edge is floor -1: ' + r.floorX.toFixed(2));
   r = await live({ ...POSE['Square stance'], x: -0.6, dist: 1.6 }); check(Math.abs(r.X - 0.6) < 0.04 && Math.abs(r.z + 0.4) < 0.06, `0.6 m right and 0.4 m forward reads ${r.X.toFixed(2)} m and ${r.z.toFixed(2)} m`);
 
-  // recording
-  await page.click('#recBtn'); await page.waitForTimeout(2500); await page.click('#recBtn');
-  await page.waitForSelector('#recTrace:not([hidden])', { timeout: 15000 });
-  check(/frames/.test(await page.textContent('#recOut')), 'recording made a trace: ' + await page.textContent('#recOut'));
+  // no video recording anywhere (Mark, 10/27)
+  check(await page.evaluate(() => !document.querySelector('#recBtn, #fileIn') && !/MediaRecorder/.test(document.documentElement.innerHTML)), 'no video recording in the app');
 
   // the touch game still works, now in 3D
   await page.click('#labBack');
@@ -137,7 +135,13 @@ try {
   // camera play with the synthetic figure: the warm-up calibration, walls from the warm-in's circling,
   // then the tracker drives level, floor and eye height, and a shot comes in as a move
   await page.click('#endBtn');
-  await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('roomtime.cal')); delete c.floor; localStorage.setItem('roomtime.cal', JSON.stringify(c)); });
+  // free play first, with a full calibration (the saved one is 20 days old, so no quick check)
+  await page.evaluate(() => {
+    const c = RoomTimeLab.L.cal; delete c.floor; c.fullAt = new Date(Date.now() - 20 * 864e5).toISOString();
+    localStorage.setItem('roomtime.cal', JSON.stringify(c)); localStorage.removeItem('roomtime.history');
+  });
+  check(/baseline test/.test(await page.textContent('#trainSum')), 'Train me with no history plans a baseline test: ' + await page.textContent('#trainSum'));
+  await page.click('#segTrain button[data-v="0"]');
   await page.click('#camPlayBtn');
   await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
   check(await page.evaluate(() => RoomTimeGame.S.mode) === 'calib', 'camera play opens with the warm-up calibration');
@@ -164,8 +168,56 @@ try {
   await camState({ ...POSE['Square stance'], dist: 2.0 }, 1500);
   c = await camState({ ...POSE['Square stance'], hip: 0.58, lean: 0.5, dist: 2.1, handY: 0.33 }, 1200);
   check(c.moves === 'shot,down_block', 'camera play: hands to the knees with the hips back is a down block: ' + c.moves);
+  // (game time runs slow at 2 fps: count this round as 30 s in, past the 5 s a round needs to be kept)
+  await page.evaluate(() => { RoomTimeGame.S.R.work = 30; });
   await page.click('#endBtn'); await page.waitForTimeout(300);
   check(await page.evaluate(() => RoomTimeLab.L.src) === null, 'leaving camera play stops the camera');
+  let hist = await page.evaluate(() => JSON.parse(localStorage.getItem('roomtime.history') || '[]'));
+  check(hist.length === 1 && hist[0].mode === 'free' && hist[0].partial, 'a free play session that ended early is saved, marked partial');
+
+  // Train me: a recent full calibration from this camera means a quick check (standing and the floor), then the baseline test
+  await page.click('#segTrain button[data-v="1"]');
+  await page.click('#camPlayBtn');
+  await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
+  const quick = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
+  check(quick.join() === 'Standing', 'a recent calibration: the quick check is standing, then the shuffle: ' + quick.join(', '));
+  check(await page.textContent('#phaseName') === 'Stance hold' && await page.evaluate(() => RoomTimeGame.S.prog.kind) === 'baseline', 'the baseline test starts with the stance hold');
+  // (in game time, which runs slow here: hold 4 s, then stand up)
+  await pose(POSE['Square stance']);
+  await page.waitForFunction(() => RoomTimeGame.S.hold.t > 4, null, { timeout: 120000 });
+  await pose(POSE.Standing);
+  await page.waitForFunction(() => RoomTimeGame.S.mode === 'rest', null, { timeout: 120000 }).catch(() => {});
+  const held = await page.evaluate(() => RoomTimeGame.S.rounds[0] && RoomTimeGame.S.rounds[0].holdS);
+  check(held > 3.5 && held < 7, `the hold ends when you stand up: held ${held && held.toFixed(1)} s`);
+  await pose(POSE['Square stance']);
+  await page.click('#skipBtn');
+  await page.waitForFunction(() => RoomTimeGame.S.mode === 'work' && RoomTimeGame.S.r === 1, null, { timeout: 15000 });
+  check(await page.textContent('#phaseName') === 'Reaction test', 'then the reaction test');
+  await page.waitForFunction(() => RoomTimeGame.S.trials.length >= 1, null, { timeout: 120000 }).catch(() => {});
+  await page.click('#skipBtn'); await page.waitForTimeout(500); await page.click('#skipBtn');
+  await page.waitForFunction(() => RoomTimeGame.S && RoomTimeGame.S.mode === 'done', null, { timeout: 15000 });
+  hist = await page.evaluate(() => JSON.parse(localStorage.getItem('roomtime.history') || '[]'));
+  const b = hist[1] || {};
+  check(hist.length === 2 && b.kind === 'baseline' && !b.partial && Math.abs(b.holdS - held) < 0.01 && b.trials.length > 0,
+    `the baseline is saved: hold ${b.holdS && b.holdS.toFixed(1)} s, ${b.trials && b.trials.length} calls`);
+  check(/Saved/.test(await page.textContent('#debriefIn')) && /Next session/.test(await page.textContent('#debriefIn')), 'the debrief shows the saved numbers and the next session');
+  await page.click('#menuBtn'); await page.waitForTimeout(300);
+  check(/^Next camera session ·/.test(await page.textContent('#trainSum')), 'after the baseline, Train me plans a session: ' + await page.textContent('#trainSum'));
+  check(/Level: Novice/.test(await page.textContent('#trainLevel')), 'level: ' + await page.textContent('#trainLevel'));
+  const csv = await page.evaluate(() => RoomTime.toCSV(JSON.parse(localStorage.getItem('roomtime.history'))).trim().split('\n'));
+  check(csv.length === 3 && /^date,mode,kind/.test(csv[0]), 'the CSV has a row per session');
+  // back up, then restore that file plus one session from another device: sessions merge once each
+  await page.click('#histBox summary').catch(() => {});
+  const dl = page.waitForEvent('download', { timeout: 10000 }).catch(() => null);
+  await page.click('#backupBtn');
+  const file = await dl, bak = file ? JSON.parse(readFileSync(await file.path(), 'utf8')) : null;
+  check(bak && bak.format === 'room-time-backup' && bak.history.length === 2 && bak.cal && bak.cal.stand, 'Back up saves every session and the calibration in one file');
+  if (bak) {
+    bak.history.push({ ...bak.history[1], date: '2026-10-20T12:00:00.000Z' });
+    await page.setInputFiles('#restoreIn', { name: 'b.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(bak)) });
+    await page.waitForFunction(() => /Restored/.test(document.getElementById('backupNote').textContent), null, { timeout: 5000 }).catch(() => {});
+    check(/Restored: 1 session added, 3 in all/.test(await page.textContent('#backupNote')), 'Restore merges: ' + await page.textContent('#backupNote'));
+  }
 } finally {
   await browser.close(); server.close();
 }
