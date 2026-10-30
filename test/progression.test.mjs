@@ -159,6 +159,31 @@ test('scaling the rounds left keeps the end time', () => {
   assert.ok(upk[0].work >= 40);
 });
 
+test('high stance, no stance and missed calls read as fatigue', () => {
+  const base = RT.capacityObs(round('tech', 40, 0.76));
+  assert.ok(RT.capacityObs(round('tech', 40, 0.76, { uprightPct: 0.2 })) <= 28, 'upright a fifth of the round: spent');
+  assert.ok(RT.capacityObs(round('tech', 40, 0.76, { calls: 6, missed: 2 })) <= 28, 'a third of the calls not done: spent');
+  assert.equal(RT.capacityObs(round('tech', 40, 0.76, { calls: 6, missed: 1 })), base, 'one missed call is not a pattern');
+  assert.ok(RT.capacityObs(round('tech', 40, 0.76, { highPct: 0.3 })) <= 36, 'high a third of the round: tiring');
+  const next = [{ phase: 'tech', work: 40, rest: 40 }];
+  assert.ok(RT.adaptRound(round('tech', 40, 0.76, { uprightPct: 0.25 }), next).rounds[0].work < 40, 'and the next rounds shorten');
+  // a missed call says nothing about your reads: the staircase only reads the calls with a window
+  const trials = [{ m: 'sprawl', h: true, rt: 0.5, w: 1.0 }, { m: 'sprawl', h: false, missed: 1 }];
+  assert.ok(Math.abs(RT.staircase(trials).sprawl - 0.97) < 1e-9);
+});
+
+test('long sessions: up to 90 minutes, filled exactly, and lighter until you have built up to them', () => {
+  const h = simulate(RT, weekdays(4)).history, now = T0 + 28 * DAY;
+  for (const minutes of [45, 60, 90]) {
+    const p = RT.planNext(h, now, { minutes });
+    assert.ok(Math.abs(length(p) - minutes * 60) <= 15, `${minutes} min runs ${length(p)} s`);
+  }
+  const p15 = RT.planNext(h, now, { minutes: 15 }), p90 = RT.planNext(h, now, { minutes: 90 });
+  const L = (p) => p.rounds.reduce((a, r) => a + r.work / 60 * RT.PROG.loadK[r.phase], 0) + p.cap * RT.PROG.repLoad;
+  assert.ok((p90.state.fat6 + L(p90)) / p90.state.fit <= RT.PROG.acwrCap + 1e-9 || p90.day === 'light', '90 min stays inside your load');
+  assert.ok(p90.rest >= p15.rest, 'longer rests');
+});
+
 test('explosive tolerance: reps until the speed fades', () => {
   const fade = [1, 1, 1, 0.98, 0.96, 0.95, 0.9, 0.85, 0.78, 0.75, 0.7];
   assert.equal(RT.explosiveTol(fade), 8); assert.equal(RT.speedHolding(fade), false);
