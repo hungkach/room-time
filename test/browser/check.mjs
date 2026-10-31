@@ -218,19 +218,43 @@ try {
   check(/^Today: Light day/.test(await page.textContent('#trainSum')) && /Session 3 today/.test(await page.textContent('#trainWhy')), 'a third session today is planned around the first two: ' + await page.textContent('#trainSum'));
   check(/^Your numbers · rounds of \d+ s held/.test(await page.textContent('#trainNums')), 'your numbers: ' + await page.textContent('#trainNums'));
   check(/Level: Novice/.test(await page.textContent('#trainLevel')), 'level: ' + await page.textContent('#trainLevel'));
+
+  // an open session: practice blocks keep coming until you end it, and ending it finishes it
+  await page.click('#openBtn');
+  check(await page.textContent('#lenVal') === 'Open' && /open, blocks of \d+ rounds until you end it/.test(await page.textContent('#trainSum')), 'Open: ' + await page.textContent('#trainSum'));
+  await page.click('#camPlayBtn');
+  await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
+  await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
+  await page.waitForFunction(() => RoomTimeGame.S.mode === 'work', null, { timeout: 60000 });
+  await pose(POSE['Square stance']);
+  const planned = await page.evaluate(() => RoomTimeGame.S.plan.length);
+  for (let i = 0; i < planned + 3; i++) { await page.click('#skipBtn'); await page.waitForTimeout(200); }
+  const op = await page.evaluate(() => ({ mode: RoomTimeGame.S.mode, r: RoomTimeGame.S.r, n: RoomTimeGame.S.plan.length, top: document.getElementById('roundNo').textContent,
+    phases: RoomTimeGame.S.plan.slice(0, RoomTimeGame.S.r + 1).map((x) => x.phase[0]).join('') }));
+  check(op.mode !== 'done' && op.r >= planned && op.n > planned && /open \d+:\d\d/.test(op.top), `an open session runs past its first stretch: round ${op.r + 1}, ${op.phases}, "${op.top}"`);
+  check(/^wt+s+l+t/.test(op.phases), 'blocks: technique, situations, a live go, then technique again: ' + op.phases);
+  await page.evaluate(() => { RoomTimeGame.S.R.work = Math.max(RoomTimeGame.S.R.work, 8); });
+  await page.click('#endBtn');
+  await page.waitForFunction(() => RoomTimeGame.S && RoomTimeGame.S.mode === 'done', null, { timeout: 15000 }).catch(() => {});
+  hist = await page.evaluate(() => JSON.parse(localStorage.getItem('roomtime.history') || '[]'));
+  const o = hist[hist.length - 1] || {};
+  check(hist.length === 3 && o.open && !o.partial && o.rounds.length === op.r + 1, `ending an open session finishes it: ${o.rounds && o.rounds.length} rounds saved, open ${o.open}, partial ${o.partial}`);
+  check(await page.isVisible('#debrief'), 'and shows the debrief');
+  await page.click('#menuBtn'); await page.waitForTimeout(300);
+  await page.click('#openBtn');
   const csv = await page.evaluate(() => RoomTime.toCSV(JSON.parse(localStorage.getItem('roomtime.history'))).trim().split('\n'));
-  check(csv.length === 3 && /^date,mode,kind/.test(csv[0]), 'the CSV has a row per session');
+  check(csv.length === 4 && /^date,mode,kind/.test(csv[0]), 'the CSV has a row per session');
   // back up, then restore that file plus one session from another device: sessions merge once each
   await page.click('#histBox summary').catch(() => {});
   const dl = page.waitForEvent('download', { timeout: 10000 }).catch(() => null);
   await page.click('#backupBtn');
   const file = await dl, bak = file ? JSON.parse(readFileSync(await file.path(), 'utf8')) : null;
-  check(bak && bak.format === 'room-time-backup' && bak.history.length === 2 && bak.cal && bak.cal.stand, 'Back up saves every session and the calibration in one file');
+  check(bak && bak.format === 'room-time-backup' && bak.history.length === 3 && bak.cal && bak.cal.stand, 'Back up saves every session and the calibration in one file');
   if (bak) {
     bak.history.push({ ...bak.history[1], date: '2026-10-20T12:00:00.000Z' });
     await page.setInputFiles('#restoreIn', { name: 'b.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(bak)) });
     await page.waitForFunction(() => /Restored/.test(document.getElementById('backupNote').textContent), null, { timeout: 5000 }).catch(() => {});
-    check(/Restored: 1 session added, 3 in all/.test(await page.textContent('#backupNote')), 'Restore merges: ' + await page.textContent('#backupNote'));
+    check(/Restored: 1 session added, 4 in all/.test(await page.textContent('#backupNote')), 'Restore merges: ' + await page.textContent('#backupNote'));
   }
 } finally {
   await browser.close(); server.close();
