@@ -184,6 +184,44 @@ test('long sessions: up to 90 minutes, filled exactly, and lighter until you hav
   assert.ok(p90.rest >= p15.rest, 'longer rests');
 });
 
+test('practice blocks: technique, situations, then a live go, repeating in long sessions', () => {
+  const short = RT.buildRounds('volume', 35, 35, 900), long = RT.buildRounds('volume', 35, 35, 3600);
+  const shape = (r) => r.map((x) => x.phase[0]).join('');
+  assert.match(shape(short), /^wt+s+l+$/, 'one block in 15 min: ' + shape(short));
+  assert.match(shape(long), /^w(t+s+l+){3,}$/, 'several in 60: ' + shape(long));
+  for (const r of [short, long]) assert.equal(r.reduce((a, x) => a + x.work + x.rest, 0), r === short ? 900 : 3600);
+  assert.ok(long.filter((x) => x.phase === 'live').every((x) => x.periods <= 3));
+});
+
+test('the next round is picked from how the session is going', () => {
+  const tg = { tech: 2, sit: 2, live: 2 }, R = (phase, o = {}) => ({ phase, work: 30, stancePct: 0.78, ...o });
+  const pick = (rs, cap) => RT.pickPhase([R('warm'), ...rs], tg, cap);
+  assert.equal(pick([]).phase, 'tech');
+  assert.equal(pick([R('tech')]).k, 1);
+  assert.equal(pick([R('tech'), R('tech')]).phase, 'sit');
+  const go = pick([R('tech'), R('tech'), R('sit'), R('sit')]);
+  assert.equal(go.phase, 'live'); assert.equal(go.period, 1); assert.equal(go.periods, 2);
+  assert.equal(pick([R('tech'), R('tech'), R('sit'), R('sit'), R('live')]).period, 2, 'the rest of the go');
+  assert.equal(pick([R('tech'), R('tech'), R('sit'), R('sit'), R('live'), R('live')]).phase, 'tech', 'then a new block');
+  assert.equal(pick([R('tech'), R('tech'), R('sit'), R('sit', { uprightPct: 0.3 })]).phase, 'tech', 'spent: technique, not the live go');
+  assert.equal(pick([R('tech'), R('tech'), R('sit'), R('sit', { stancePct: 0.5 })]).phase, 'tech', 'stance not holding: one more technique round first');
+  assert.notEqual(pick([R('tech'), R('tech'), R('sit'), R('sit')], true).phase, 'live', 'explosive work done: no live go');
+  assert.equal(pick([R('tech'), R('tech'), R('sit'), R('sit'), R('live', { calls: 6, missed: 3 })]).phase, 'tech', 'spent mid-go: back to technique');
+});
+
+test('an open session plans its first stretch and the blocks to keep going', () => {
+  const h = simulate(RT, weekdays(2)).history;
+  const p = RT.planNext(h, T0 + 14 * DAY, { open: true });
+  assert.equal(p.open, true); assert.equal(length(p), RT.PROG.openS);
+  assert.ok(p.blocks.tech >= 1 && p.blocks.sit >= 1 && p.blocks.live >= 1 && p.blocks.live <= 3);
+  assert.ok(p.why.some((x) => /Open session/.test(x)));
+  // a long open session's load counts like any other: the next day is lighter
+  const big = { date: new Date(T0 + 14 * DAY).toISOString(), kind: 'session', day: 'volume', open: true, minutes: 60,
+    rounds: Array.from({ length: 50 }, () => round('sit', 45, 0.76)), explosive: 40, trials: [] };
+  const next = RT.planNext([...h, big], T0 + 15 * DAY, { minutes: 15 });
+  assert.equal(next.day, 'light', 'after a 60 minute open session: ' + next.why[0]);
+});
+
 test('explosive tolerance: reps until the speed fades', () => {
   const fade = [1, 1, 1, 0.98, 0.96, 0.95, 0.9, 0.85, 0.78, 0.75, 0.7];
   assert.equal(RT.explosiveTol(fade), 8); assert.equal(RT.speedHolding(fade), false);
