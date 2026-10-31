@@ -1044,7 +1044,8 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 
   // Today's session. opts: {minutes (what you picked), open (no end: the first openS is planned, the game adds the rest)}
   RT.planNext = function(history, now, opts){
-    const P = RT.PROG, o = opts || {}, open = !!o.open, minutes = open ? P.openS/60 : (o.minutes || 15), totalS = minutes*60;
+    const P = RT.PROG, o = opts || {}, open = !!o.open, minutes = open ? P.openS/60 : (o.minutes || 15);
+    let totalS = minutes*60;
     const st = RT.state(history, now), q = RT.qualities(st), why = [];
     // the day type
     let day;
@@ -1067,8 +1068,10 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     // more in a long session so it can't turn into double the load
     const longK = minutes > 20 ? 1 + 0.15*Math.min(1, (minutes - 20)/10) : 1;
     const restOf = (w, k) => Math.round(clampN(w*st.rec*k*(1 - 0.2*r)*longK, P.restMin, P.restMax));
-    let work = Math.round(clampN(st.cap*D.work*(1 + 0.1*r), P.capMin, totalS - 45)/5)*5;
+    let work = Math.round(clampN(st.cap*D.work*(1 + 0.1*r), P.capMin, open ? P.capMax : totalS - 45)/5)*5;
     let rest = restOf(work, D.rest);
+    // an open session has no round ceiling either: its first stretch is at least openS, with room for two full rounds
+    if (open) totalS = Math.max(P.openS, Math.min(work, 45) + 2*(work + rest));
     let cap = Math.round(clampN(st.tol*D.tol*(1 + 0.2*r)*Math.sqrt(minutes/15), P.tolMin, P.tolMax));
     let ease = D.ease*(st.todayN ? 1.1 : 1);
     if (st.todayN) cap = Math.max(P.tolMin, Math.round(cap*0.6));

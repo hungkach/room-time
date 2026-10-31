@@ -215,6 +215,11 @@ test('an open session plans its first stretch and the blocks to keep going', () 
   assert.equal(p.open, true); assert.equal(length(p), RT.PROG.openS);
   assert.ok(p.blocks.tech >= 1 && p.blocks.sit >= 1 && p.blocks.live >= 1 && p.blocks.live <= 3);
   assert.ok(p.why.some((x) => /Open session/.test(x)));
+  // no round ceiling in an open session: a big round length gets its full rounds, at least two of them
+  const fit = sess(0, { rounds: Array.from({ length: 30 }, () => round('tech', 1500, 0.75)) });
+  const q = RT.planNext([fit], T0 + DAY, { open: true }), longest = Math.max(...q.rounds.map((r) => r.work));
+  assert.ok(longest > 855, 'rounds past the old 14 minute cap: ' + longest);
+  assert.ok(q.rounds.filter((r) => r.phase !== 'warm').length >= 2 && length(q) > RT.PROG.openS, `${q.rounds.length - 1} rounds over ${length(q)} s`);
   // a long open session's load counts like any other: the next day is lighter
   const big = { date: new Date(T0 + 14 * DAY).toISOString(), kind: 'session', day: 'volume', open: true, minutes: 60,
     rounds: Array.from({ length: 50 }, () => round('sit', 45, 0.76)), explosive: 40, trials: [] };
