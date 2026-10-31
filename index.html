@@ -132,6 +132,10 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 /* camera check (Phase 0) */
 .actions.one{grid-template-columns:1fr}
 #menu.train .free-only{display:none}
+#menu:not(.train) .train-only{display:none}
+.stepper{display:grid;grid-template-columns:56px 1fr 56px;gap:6px;align-items:center}
+.stepper button{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:8px 0;font-family:var(--f-display);font-weight:600;font-size:1.4rem;color:var(--ink)}
+.stepper b{text-align:center;font-family:var(--f-display);font-weight:600;font-size:1.2rem}
 .plan .why{margin:0;padding-left:18px;font-size:.88rem;line-height:1.45;color:var(--muted)}
 #histBox summary{cursor:pointer;font-weight:600;font-size:.92rem}
 #histBox[open]{display:flex;flex-direction:column;gap:10px}
@@ -195,6 +199,9 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         <button id="len20" data-v="20">20<small>min</small></button>
         <button id="len25" data-v="25">25<small>min</small></button>
         <button id="len30" data-v="30">30<small>min</small></button>
+      </div>
+      <div class="stepper train-only" id="lenStep">
+        <button data-d="-5" aria-label="5 minutes less">−</button><b id="lenVal">15 min</b><button data-d="5" aria-label="5 minutes more">+</button>
       </div>
     </div>
     <div class="field free-only">
@@ -732,6 +739,10 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     // recovery: rest per second of work. A strong start after a rest (startGood in stance over the first startS) says
     // the rest was more than enough, a weak one (under startWeak) that it was too short.
     rec0:1.2, recMin:0.05, recMax:3, recPrior:4, startS:20, startGood:0.8, startWeak:0.6,
+    // where the stance sits: over upright (level, 1 = standing tall) is no stance; between the band and upright is a
+    // high stance. A round with uprightAt of its time upright, or missedAt of its calls not done at all, is spent;
+    // highAt of its time high is tiring.
+    upright:0.85, uprightAt:0.15, missedAt:0.3, highAt:0.25, lateS:1.5,
     restMin:10, restMax:120, holdEvery:28, holdAfter:4, holdCap:300, breakS:2, breakRoundS:3, totalS:15*60,
     // load per minute of work by round type, and per shot or sprawl
     loadK:{warm:0.5, tech:0.8, react:0.8, hold:1.0, sit:1.0, live:1.3}, repLoad:0.2
@@ -821,9 +832,13 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
     if (!r) return null;
     if (r.phase === 'hold') return num(r.hold) && r.hold > 0 ? clampN(0.6*r.hold, P.capMin, P.capMax) : null;
     if (r.phase === 'warm' || !num(r.work) || r.work < 10 || !num(r.stancePct)) return null;
+    // an "at least" reading needs a clean round: nothing spent or high in it
     let k = clampN(Math.pow(r.stancePct/P.stanceAt, 2), 0.6, 1.25);
     // the stance broke early and stayed broken: no more than a little past that point
     if (num(r.breakT) && r.breakT < r.work*0.8) k = Math.min(k, Math.max(0.6, 1.1*r.breakT/r.work));
+    // standing up or not doing the calls at all: spent, the round was well past what you had; a high stance: tiring
+    if ((num(r.uprightPct) && r.uprightPct >= P.uprightAt) || (num(r.calls) && r.calls >= 3 && r.missed/r.calls >= P.missedAt)) k = Math.min(k, 0.7);
+    else if (num(r.highPct) && r.highPct >= P.highAt) k = Math.min(k, 0.9);
     return clampN(r.work*k, P.capMin, P.capMax);
   };
   // Shots and sprawls before the speed fades: the first rep whose last three run under speedFade of the first three.
@@ -903,7 +918,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         const v = RT.capacityObs(r);
         // an easy round, or a hold that ran its whole planned time, only says "at least"
         const unbroken = r.phase === 'hold' && num(r.plan) && num(r.hold) && r.hold >= r.plan - 1;
-        if (v != null) capPts.push({t, v, atLeast:unbroken || (r.phase !== 'hold' && Math.pow(r.stancePct/P.stanceAt, 2) >= 1.25)});
+        if (v != null) capPts.push({t, v, atLeast:unbroken || (r.phase !== 'hold' && Math.pow(r.stancePct/P.stanceAt, 2) >= 1.25 && v >= r.work*1.2)});
       }
     }
     const cap = running(capPts, P.cap0, P.capPrior);
@@ -1254,8 +1269,10 @@ const fmtClock = s => { s = Math.max(0, Math.ceil(s)); return Math.floor(s/60) +
 const ms = s => Math.round(s*1000) + ' ms';
 
 /* ---------- settings ---------- */
-let settings = {len:15, pace:'match', quick:true, device:'tablet', facing:'front', train:true};
+// trainLen: Train me's session length, 10 to 90 minutes (len: Free play's, 15 to 30)
+let settings = {len:15, trainLen:15, pace:'match', quick:true, device:'tablet', facing:'front', train:true};
 try { const s = JSON.parse(localStorage.getItem('roomtime.settings') || 'null'); if (s && LAYOUT[s.len] && PACE[s.pace]) settings = Object.assign(settings, s); } catch(e) {}
+settings.trainLen = clamp(Math.round((+settings.trainLen || 15)/5)*5, 10, 90);
 if (!['tablet', 'phone'].includes(settings.device)) settings.device = 'tablet';
 if (!['front', 'back'].includes(settings.facing)) settings.facing = 'front';
 let muted = false;
@@ -1271,9 +1288,9 @@ function buildPlan(len){
 }
 
 function renderMenu(){
-  [['segLen','len'],['segPace','pace'],['segQuick','quick'],['segDevice','device'],['segFacing','facing'],['segTrain','train']].forEach(([id,key]) => {
+  [['segLen', settings.train ? 'trainLen' : 'len'],['segPace','pace'],['segQuick','quick'],['segDevice','device'],['segFacing','facing'],['segTrain','train']].forEach(([id,key]) => {
     $(id).querySelectorAll('button').forEach(b => {
-      const v = key==='len' ? +b.dataset.v : (key==='quick' || key==='train') ? b.dataset.v==='1' : b.dataset.v;
+      const v = (key==='len' || key==='trainLen') ? +b.dataset.v : (key==='quick' || key==='train') ? b.dataset.v==='1' : b.dataset.v;
       b.setAttribute('aria-pressed', String(settings[key] === v));
     });
   });
@@ -1297,10 +1314,11 @@ function renderTrain(){
   const esc = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]);
   const sec = v => v >= 60 ? `${Math.floor(v/60)}:${String(Math.round(v%60)).padStart(2, '0')}` : `${Math.round(v)} s`;
   if (settings.train) {
-    const p = RT.planNext(h, Date.now(), {minutes:settings.len}), st = p.state, q = RT.qualities(st);
+    const p = RT.planNext(h, Date.now(), {minutes:settings.trainLen}), st = p.state, q = RT.qualities(st);
+    $('lenVal').textContent = settings.trainLen + ' min';
     const ws = RT.PROG.moves.map(m => p.windows[m]);
     $('trainStrip').innerHTML = p.rounds.map(r => `<i style="background:var(--${PHASE[r.phase].c});flex:${r.work}"></i>`).join('');
-    $('trainSum').innerHTML = `<b>Today: ${esc(p.dayName)}</b> · ${p.rounds.length} rounds in ${settings.len} min, ${sec(p.work)} work, ${sec(p.rest)} rest, `
+    $('trainSum').innerHTML = `<b>Today: ${esc(p.dayName)}</b> · ${p.rounds.length} rounds in ${settings.trainLen} min, ${sec(p.work)} work, ${sec(p.rest)} rest, `
       + `explosive cap ${p.cap}, read windows ${Math.min(...ws).toFixed(2)} to ${Math.max(...ws).toFixed(2)} s. Each round re-tunes the next.`;
     $('trainWhy').innerHTML = p.why.map(w => `<li>${esc(w)}</li>`).join('');
     $('trainNums').innerHTML = !h.length ? '' : `<b>Your numbers</b> · rounds of ${sec(st.cap)} held${st.longest ? ` (longest ${sec(st.longest)})` : ''}, `
@@ -1372,7 +1390,11 @@ $('histClear').addEventListener('click', () => {
   try { localStorage.removeItem('roomtime.history'); } catch(e) {}
   renderTrain();
 });
-$('segLen').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.len = +b.dataset.v; saveSettings(); renderMenu(); });
+$('segLen').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings[settings.train ? 'trainLen' : 'len'] = +b.dataset.v; saveSettings(); renderMenu(); });
+$('lenStep').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  settings.trainLen = clamp((settings.trainLen || 15) + +b.dataset.d, 10, 90); saveSettings(); renderMenu();
+});
 $('segPace').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.pace = b.dataset.v; saveSettings(); renderMenu(); });
 $('segQuick').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.quick = b.dataset.v==='1'; saveSettings(); renderMenu(); });
 $('segDevice').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.device = b.dataset.v; saveSettings(); renderMenu(); });
@@ -1429,13 +1451,13 @@ window.addEventListener('resize', resize);
 function startSession(auto, cam){
   ensureAudio();
   const RT = globalThis.RoomTime, train = !!(cam && !auto && settings.train && RT && RT.planNext);
-  const prog = train ? RT.planNext(loadHistory(), Date.now(), {minutes:settings.len}) : null;
+  const prog = train ? RT.planNext(loadHistory(), Date.now(), {minutes:settings.trainLen}) : null;
   const today = prog && prog.session ? prog.session : prog;   // a session plan's adjustments for today
   const P = prog ? progPace(today.windows) : PACE[settings.pace];
   // each planned round carries its own work and the rest before it (headless checks: short rounds)
   const plan = prog ? prog.rounds.map(r => FASTQ ? Object.assign({}, r, {work:r.phase === 'hold' ? 20 : 15, rest:4}) : Object.assign({}, r)) : buildPlan(settings.len);
   S = {
-    auto, P, len:settings.len, plan,
+    auto, P, len:prog ? settings.trainLen : settings.len, plan,
     workDur:prog ? today.work : settings.quick?30:120,
     restDur:prog ? today.rest : settings.quick?8:30,
     prog, windows:prog ? today.windows : null, trials:[], reps:[], fakesBit:0, startedAt:new Date().toISOString(), saved:false,
@@ -1459,7 +1481,12 @@ function startSession(auto, cam){
   requestAnimationFrame(() => { resize(); });
   say('Room time.', true);
   try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(l => wakeLock = l).catch(() => {}); } catch(e) {}
-  startRound();
+  getSet();
+}
+// a few seconds to get set before round one, counting down the last three
+function getSet(){
+  S.mode = 'rest'; S.prestart = true; S.clock = FASTQ ? 0.5 : 5; S.cdLast = null; S.restNote = 'Get in your stance.';
+  setOpp('rest', 999);
 }
 function quit(){
   if (S && S.cam && S.mode !== 'calib' && S.mode !== 'done') saveSession(true);
@@ -1487,7 +1514,9 @@ function startRound(){
   const rd = S.plan[S.r];
   S.mode = 'work'; S.clock = rd.work || S.workDur;
   S.R = {phase:rd.phase, work:0, inBand:0, reactions:[], recoveries:[], hits:0, misses:0, outT:0, breakT:null, low:null,
-    plan:rd.work || S.workDur, rest:S.r ? (rd.rest != null ? rd.rest : S.restDur) : 0, startIn:0, startT:0};
+    plan:rd.work || S.workDur, rest:S.r ? (rd.rest != null ? rd.rest : S.restDur) : 0, startIn:0, startT:0,
+    highT:0, upT:0, lowT:0, calls:0, late:0, missed:0};
+  S.pending = null;
   S.hold = {t:0, wait:0, inT:0, broke:0, started:false};
   S.cue = null; S.nextCueAt = S.time + 2.0; S.lastMoveT = S.time; S.hiT = 0; S.loT = 0; S.offAngle = 0;
   S.lastCorrection = S.time - 6; S.bot.q = [];
@@ -1507,6 +1536,7 @@ function startRound(){
 
 function endWork(){
   sfx.buzzer();
+  if (S.pending) { recordMove(S.pending.move, false, null, true, 'missed'); S.pending = null; }
   const rd = S.plan[S.r], R = S.R;
   if (rd.phase === 'hold' && R.holdS == null) R.holdS = S.hold.started ? S.hold.t : 0;
   S.rounds.push(R); S.cue = null; S.action = null; S.recoverFrom = null;
@@ -1536,8 +1566,10 @@ function endWork(){
     shown = `${fin ? 'Final' : 'Score'} ${S.score.you}–${S.score.opp} · in stance ${pct}%`;
     spoken = `${fin ? 'Final, ' : ''}${S.score.you} to ${S.score.opp}. In stance ${pct} percent.`;
   } else {
-    const tot = R.hits + R.misses;
-    shown = `In stance ${pct}% · ${R.hits} of ${tot} on time`;
+    const tot = R.hits + R.misses, p2 = v => Math.round(100*v/Math.max(R.work, 0.01));
+    const split = [R.highT > 0.5 ? `high ${p2(R.highT)}%` : '', R.upT > 0.5 ? `upright ${p2(R.upT)}%` : ''].filter(Boolean).join(', ');
+    const calls = [R.late ? `${R.late} late` : '', R.missed ? `${R.missed} missed` : ''].filter(Boolean).join(', ');
+    shown = `In stance ${pct}%${split ? ' (' + split + ')' : ''} · ${R.hits} of ${tot} on time${calls ? ' (' + calls + ')' : ''}`;
     spoken = `In stance ${pct} percent. ${R.hits} of ${tot} on time.`;
   }
   if (rd.phase === 'warm' && S.readiness && S.readiness.text && S.readiness.parts.length) {
@@ -1583,11 +1615,16 @@ function progPace(w){
 // stair: a coach's call in a drill round, given at this move's window. In a Train me session (not the warm-in) the
 // window steps after it, a hit 3% shorter, a miss 9% longer, and the call keeps the window it was given at
 // (without today's ease) so the next session carries on from here.
-function recordMove(m, hit, rt, stair){
+// how: 'late' (the move came after the window, rt is when), 'missed' (never came: too tired to do it, so it says
+// nothing about your reads and the staircase doesn't step), or 'wrong' (a different move).
+function recordMove(m, hit, rt, stair, how){
   if (!S || S.auto) return;
-  const k = moveKey(m), t = {m:k, h:!!hit, rt:hit && rt != null ? Math.round(rt*1000)/1000 : null};
+  const k = moveKey(m), t = {m:k, h:!!hit, rt:(hit || how === 'late') && rt != null ? Math.round(rt*1000)/1000 : null};
+  if (how) t[how] = 1;
+  if (S.R && !hit) { if (how === 'missed') S.R.missed++; else if (how === 'late') S.R.late++; }
+  if (S.R && stair) S.R.calls++;
   const P = globalThis.RoomTime.PROG, ph = S.plan[S.r] && S.plan[S.r].phase;
-  if (stair && S.prog && S.prog.kind === 'session' && S.windows && ph !== 'warm') {
+  if (stair && how !== 'missed' && S.prog && S.prog.kind === 'session' && S.windows && ph !== 'warm') {
     const ease = (S.prog.session && S.prog.session.ease) || 1;
     t.w = Math.round(1000*S.windows[k]/ease)/1000;
     S.windows[k] = clamp(S.windows[k]*(hit ? P.hitStep : P.missStep), P.wMin*ease, P.wMax*ease);
@@ -1605,7 +1642,9 @@ function warmRecord(){
 // a round as saved: how long it ran, the share in stance, when the stance broke, a hold's time
 function roundRecord(R){
   const r = {phase:R.phase, work:Math.round(R.work*10)/10, plan:R.plan, rest:R.rest, stancePct:R.work ? Math.round(1000*R.inBand/R.work)/1000 : null,
-    startPct:R.startT >= 10 ? Math.round(1000*R.startIn/R.startT)/1000 : null, breakT:R.breakT == null ? null : Math.round(R.breakT*10)/10};
+    startPct:R.startT >= 10 ? Math.round(1000*R.startIn/R.startT)/1000 : null, breakT:R.breakT == null ? null : Math.round(R.breakT*10)/10,
+    highPct:R.work ? Math.round(1000*R.highT/R.work)/1000 : null, uprightPct:R.work ? Math.round(1000*R.upT/R.work)/1000 : null,
+    lowPct:R.work ? Math.round(1000*R.lowT/R.work)/1000 : null, calls:R.calls, late:R.late, missed:R.missed};
   if (R.phase === 'hold') { r.hold = R.holdS == null ? null : Math.round(R.holdS*10)/10; r.stancePct = null; }
   return r;
 }
@@ -1823,18 +1862,32 @@ function scheduleCue(){
   let g = rand(...S.P.gap); if (rd.phase === 'warm') g *= 1.25; if (rd.phase === 'tech' && rd.k >= 2) g *= 0.85;
   S.nextCueAt = S.time + g;
 }
+// Past the window: wait lateS for the move. If it comes it's late (your read was slow); if not it's missed.
+// A wrong move is a misread, counted at once.
 function missCue(reason){
-  if (S.cue) recordMove(S.cue.seq[S.cue.step], false, null, true);
-  S.R.misses++; callout(reason, S.cue ? S.cue.label : '', 'miss'); sfx.miss(); S.cue = null; scheduleCue();
+  const c = S.cue;
+  if (c && reason === 'Late') S.pending = {move:c.seq[c.step], stepT:c.stepT, until:S.time + RoomTime.PROG.lateS};
+  else if (c) recordMove(c.seq[c.step], false, null, true, 'wrong');
+  S.R.misses++; callout(reason, c ? c.label : '', 'miss'); sfx.miss(); S.cue = null; scheduleCue();
+}
+function settlePending(type){
+  const p = S.pending;
+  if (!p) return false;
+  const ok = type && (p.move === 'move' || p.move === 'left' || p.move === 'right' ? (type === 'left' || type === 'right') : type === p.move);
+  if (ok) { recordMove(p.move, false, S.time - p.stepT, true, 'late'); S.pending = null; callout('Late', ms(S.time - p.stepT), 'miss'); return true; }
+  if (!type && S.time > p.until) { recordMove(p.move, false, null, true, 'missed'); S.pending = null; }
+  return false;
 }
 function drillUpdate(dt){
   const o = S.opp; o.t += dt;
   if (o.state !== 'circle' && o.t > o.dur) setOpp('circle', 999);
   o.x = lerp(o.x, Math.sin(S.time*0.6)*0.12, Math.min(1, dt*2));
+  settlePending(null);
   if (S.cue) { if (S.time > S.cue.deadline) missCue('Late'); }
-  else if (S.time >= S.nextCueAt) startCue();
+  else if (S.time >= S.nextCueAt && !S.pending) startCue();
 }
 function drillInput(type){
+  if (!S.cue && settlePending(type)) return;
   const c = S.cue; if (!c) return;
   const need = c.seq[c.step];
   const ok = need === 'move' ? (type === 'left' || type === 'right') : type === need;
@@ -2029,6 +2082,9 @@ function update(dt){
     const credit = inBand || !!S.action;
     S.R.work += dt; if (credit) S.R.inBand += dt;
     if (S.R.low == null || S.level < S.R.low) S.R.low = S.level;
+    // where the stance sits when it isn't in the band: high (knees still bent), upright (no stance) or low
+    if (!credit) { if (S.level >= RoomTime.PROG.upright) S.R.upT += dt; else if (S.level > BAND.hi) S.R.highT += dt; else S.R.lowT += dt; }
+    S.upT = !S.action && S.level >= RoomTime.PROG.upright ? (S.upT || 0) + dt : 0;
     // how you start the round (after its rest): in stance over the first startS
     if (S.R.work <= RoomTime.PROG.startS) { S.R.startT += dt; if (credit) S.R.startIn += dt; }
     // when the stance first broke and stayed broken (3 s out of the band)
@@ -2039,7 +2095,8 @@ function update(dt){
     if (S.level > BAND.hi + 0.02 && !S.action) S.hiT += dt; else S.hiT = 0;
     if (S.level < BAND.lo - 0.06 && !S.action) S.loT += dt; else S.loT = 0;
     if (rd.phase !== 'hold' && S.time - S.lastCorrection > 10) {
-      if (S.hiT > 1.4) coach('Stay under the bar.');
+      if (S.upT > 2) coach('Back in your stance.');
+      else if (S.hiT > 1.4) coach('Stay under the bar.');
       else if (S.loT > 2.0) coach('Off the floor. Stay springy.');
       else if (rd.phase === 'live' && S.offAngle > 1.6) coach('Square up. Keep him centered.');
       else if (rd.phase !== 'live' && Math.abs(S.youX) > 0.85) coach('Edge. Circle back in.');
@@ -2049,7 +2106,10 @@ function update(dt){
     if (S.clock <= 0) endWork();
   } else if (S.mode === 'rest') {
     S.opp.t += dt; S.opp.x = lerp(S.opp.x, 0, Math.min(1, dt*2));
-    if (S.clock <= 0) { S.r++; startRound(); }
+    // 3, 2, 1: a tick each second, then the whistle
+    const c = Math.ceil(S.clock);
+    if (S.clock <= 3 && c >= 1 && c !== S.cdLast) { S.cdLast = c; tone(1040, 0.09, 'sine', 0.14); }
+    if (S.clock <= 0) { S.cdLast = null; if (S.prestart) S.prestart = false; else S.r++; startRound(); }
   }
 }
 
@@ -2274,10 +2334,11 @@ function draw(){
     if (S.paused) { ctx.font = FD(700, 44); ctx.fillText('Paused', W/2, H*0.45); }
     else if (S.mode === 'calib') drawCalib();
     else {
-      const next = S.plan[S.r + 1];
-      ctx.font = FD(700, 44); ctx.fillText('Reset ' + fmtClock(S.clock), W/2, H*0.36);
-      ctx.font = FB(500, 15); ctx.fillStyle = COL.ink; ctx.fillText(S.restNote, W/2, H*0.36 + 30);
-      if (next) { ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Next: ' + roundTitle(next) + ' · ' + roundBlurb(next), W/2, H*0.36 + 54); }
+      const next = S.prestart ? S.plan[S.r] : S.plan[S.r + 1];
+      if (S.clock <= 3) { ctx.font = FD(700, clamp(H*0.3, 90, 220)); ctx.fillText(String(Math.max(1, Math.ceil(S.clock))), W/2, H*0.36 + 40); }
+      else { ctx.font = FD(700, 44); ctx.fillText((S.prestart ? 'Get set ' : 'Reset ') + fmtClock(S.clock), W/2, H*0.36); }
+      if (S.clock > 3) { ctx.font = FB(500, 15); ctx.fillStyle = COL.ink; ctx.fillText(S.restNote, W/2, H*0.36 + 30); }
+      if (next && S.clock > 3) { ctx.fillStyle = COL.muted; ctx.font = FB(500, 13); ctx.fillText('Next: ' + roundTitle(next) + ' · ' + roundBlurb(next), W/2, H*0.36 + 54); }
     }
   }
 }
@@ -2361,6 +2422,7 @@ function buildDebrief(){
   else if (late - early >= 8) note = `Stance got better as the session went, ${early}% early and ${late}% late. Warm-in may need to run longer.`;
   else note = `Stance held steady across the session, about ${pct}% throughout.`;
   const hits = rs.reduce((a, r) => a + r.hits, 0), misses = rs.reduce((a, r) => a + r.misses, 0);
+  const sumOf = k => rs.reduce((a, r) => a + (r[k] || 0), 0), lateN = sumOf('late'), missed = sumOf('missed'), highT = sumOf('highT'), upT = sumOf('upT'), lowT = sumOf('lowT');
   const goes = S.goes.map((gg, i) => `<div><span>Live go${S.goes.length > 1 ? ' ' + (i + 1) : ''}</span><span>You ${gg.you} · ${gg.opp} Opp</span></div>`).join('');
   $('debriefIn').innerHTML = `
     <div><h2>Debrief</h2><div class="sub">${S.prog ? `Train me · ${S.prog.dayName} · ${Math.round(S.time/60)} min` : `${S.len}-minute plan · ${S.auto ? 'auto-play' : S.cam ? 'camera' : 'touch'} · ${settings.quick ? 'quick look' : 'full length'}`}</div></div>
@@ -2375,6 +2437,8 @@ function buildDebrief(){
     </div>
     <div class="card"><h3>Session</h3><div class="rows">
       <div><span>Drill calls on time</span><span>${hits} of ${hits + misses}</span></div>
+      ${lateN + missed ? `<div><span>Late, missed</span><span>${lateN} late (slow read), ${missed} missed (not done)</span></div>` : ''}
+      <div><span>Out of stance</span><span>high ${Math.round(100*highT/Math.max(work, 0.01))}%, upright ${Math.round(100*upT/Math.max(work, 0.01))}%, low ${Math.round(100*lowT/Math.max(work, 0.01))}%</span></div>
       ${goes}
       <div><span>Explosive reps</span><span>${S.explosive} of ${S.cap} cap</span></div>
     </div></div>
@@ -2382,7 +2446,7 @@ function buildDebrief(){
     <div class="actions"><button class="primary" id="againBtn">Run it again</button><button class="secondary" id="menuBtn">Change session</button></div>`;
   $('debrief').hidden = false; $('debrief').scrollTop = 0;
   // camera play goes again with this session's calibration (the camera is still running)
-  $('againBtn').onclick = () => { const cam = !!S.cam; startSession(S.auto, cam); if (cam) startRound(); };
+  $('againBtn').onclick = () => { const cam = !!S.cam; startSession(S.auto, cam); if (cam) getSet(); };
   $('menuBtn').onclick = quit;
   say(`Session done. In stance ${pct} percent.${reac === null ? '' : ' Reaction ' + Math.round(reac*1000) + ' milliseconds.'}`, true);
 }
@@ -2391,7 +2455,7 @@ function buildDebrief(){
 function trainDebrief(){
   const RT = globalThis.RoomTime, rec = S.savedRec;
   if (!rec || !RT) return '';
-  const h = loadHistory(), lv = RT.levelOf(h), nx = RT.planNext(h, Date.now() + 20*3600e3, {minutes:settings.len});
+  const h = loadHistory(), lv = RT.levelOf(h), nx = RT.planNext(h, Date.now() + 20*3600e3, {minutes:settings.trainLen});
   const st = RT.state(h, Date.now() + 60e3), q = RT.qualities(st), sec = v => v >= 60 ? `${Math.floor(v/60)}:${String(Math.round(v%60)).padStart(2, '0')}` : `${Math.round(v)} s`;
   const holdR = rec.rounds.find(r => r.phase === 'hold');
   const rows = RT.PROG.moves.filter(m => rec.moves[m] && rec.moves[m].n).map(m => {
@@ -2446,7 +2510,7 @@ globalThis.RoomTimeGame = {get S(){ return S; }, get settings(){ return settings
     }
     act(t, pre);
   },
-  begin:() => { if (S && S.mode === 'calib') startRound(); }};
+  begin:() => { if (S && S.mode === 'calib') getSet(); }};
 
 /* ---------- loop ---------- */
 let lastTs = 0;

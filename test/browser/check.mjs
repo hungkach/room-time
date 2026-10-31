@@ -144,6 +144,12 @@ try {
   await page.click('#segTrain button[data-v="1"]');
   check(/^Today: First session · \d+ rounds in 15 min/.test(await page.textContent('#trainSum')), 'Train me with no history: a first session at your length, no test: ' + await page.textContent('#trainSum'));
   check(await page.isHidden('#segPace') && await page.isHidden('#startBtn'), 'Train me hides the pace and the touch session');
+  await page.click('#lenStep button[data-d="5"]'); await page.click('#lenStep button[data-d="5"]');
+  check(await page.textContent('#lenVal') === '25 min' && /rounds in 25 min/.test(await page.textContent('#trainSum')), 'the length stepper plans 25 minutes: ' + await page.textContent('#trainSum'));
+  for (let i = 0; i < 20; i++) await page.click('#lenStep button[data-d="5"]');
+  check(await page.textContent('#lenVal') === '90 min', 'up to 90 minutes');
+  await page.click('#segLen button[data-v="15"]');
+  check(await page.textContent('#lenVal') === '15 min' && await page.getAttribute('#segLen button[data-v="15"]', 'aria-pressed') === 'true', 'the quick picks set it too, and show it');
   await page.click('#segTrain button[data-v="0"]');
   check(await page.isVisible('#segPace') && await page.isVisible('#startBtn'), 'Free play shows them');
   await page.click('#camPlayBtn');
@@ -151,6 +157,8 @@ try {
   check(await page.evaluate(() => RoomTimeGame.S.mode) === 'calib', 'camera play opens with the warm-up calibration');
   check(await page.isHidden('#deck'), 'camera play hides the touch buttons');
   const holds = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
+  check(await page.evaluate(() => RoomTimeGame.S.mode === 'rest' && RoomTimeGame.S.prestart), 'a get-set countdown before round one');
+  await page.waitForFunction(() => RoomTimeGame.S.mode === 'work', null, { timeout: 60000 });
   check(await page.evaluate(() => RoomTimeGame.S.mode) === 'work' && holds.join() === 'Standing,Square stance,Staggered stance', 'then the warm-in starts after the holds and the shuffle: ' + holds.join(', '));
   await page.evaluate(() => { RoomTimeGame.S.clock = 999; });   // keep this round going through the move checks
   // (this container renders camera play at about 2 fps, so the short ?fast shuffle catches only part of the floor)
@@ -184,6 +192,7 @@ try {
   await page.click('#camPlayBtn');
   await page.waitForFunction(() => RoomTimeLab.L.src === 'camera' && RoomTimeGame.S && RoomTimeGame.S.cam, null, { timeout: 60000 });
   const quick = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
+  await page.waitForFunction(() => RoomTimeGame.S.mode === 'work', null, { timeout: 60000 });
   check(quick.join() === 'Standing', 'a recent calibration: the quick check is standing, then the shuffle: ' + quick.join(', '));
   const cv = await page.evaluate(() => RoomTimeGame.S.calibView);
   check(cv && cv.steps.map((x) => x.name + ':' + x.state).join() === 'Standing:done,Floor:done' && cv.sweep.left < -0.8 && cv.sweep.right > 0.8,
@@ -201,6 +210,7 @@ try {
   const b = hist[1] || {};
   check(hist.length === 2 && b.kind === 'session' && b.day === 'light' && !b.partial && b.rounds.length === prog.n && b.rounds.every((r) => typeof r.work === 'number') && b.load > 0,
     `the session is saved round by round: ${b.rounds && b.rounds.length} rounds, load ${b.load}, ${b.trials && b.trials.length} calls`);
+  check(b.rounds && b.rounds.slice(1).every((r) => 'uprightPct' in r && 'highPct' in r && 'late' in r && 'missed' in r), 'each round saves its stance split and its late and missed calls');
   check(b.warm && typeof b.warm.stance === 'number' && b.readiness && /compares against your own after 3 sessions/.test(b.readiness.text),
     'the warm-in is measured and saved: ' + JSON.stringify(b.warm) + ' · ' + (b.readiness && b.readiness.text));
   check(/Saved/.test(await page.textContent('#debriefIn')) && /Next session/.test(await page.textContent('#debriefIn')), 'the debrief shows the saved numbers and the next session');
