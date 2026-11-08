@@ -79,6 +79,17 @@ try {
       }, 30);
     }, 1400);
   }, to);
+  // the moves taught in the warm-up, as Mark does them in his garage (no floor to sprawl to, a shot fake)
+  const GARAGE = {
+    Sprawl: { hip: 0.5, footW: 0.6, lean: 0.8, dist: 2.25, handY: 0.42 },
+    'Down block': { hip: 0.57, footW: 0.5, lean: 0.48, dist: 2.08, handY: 0.66 },
+    Shot: { hip: 0.52, footW: 0.5, lean: 0.62, dist: 2.0, handY: 0.82 },
+  };
+  const doMove = (name) => page.evaluate(({ name, mv, sq }) => {
+    const set = (p) => Object.assign(window.__pose, { stagger: 0, x: 0, elbowOut: 0.2 }, p);
+    if (name === 'Snap') { set({ ...sq, handY: 1.08 }); setTimeout(() => set({ ...sq, handY: 0.62 }), 1000); setTimeout(() => set(sq), 2200); }
+    else { set(sq); setTimeout(() => set(mv), 600); setTimeout(() => set(sq), 1700); }
+  }, { name, mv: GARAGE[name], sq: POSE['Square stance'] });
   // follows the spoken cues on the status line until done() is true; with tallFirst, the square stance starts
   // too tall and is fixed once the coaching says so
   const coached = [];
@@ -95,12 +106,14 @@ try {
       }
       const side = st.match(/^Floor: to your (left|right)/);
       if (side && !seen.has(side[0])) { seen.add(side[0]); await sweep(side[1] === 'left' ? 1.05 : -1.05); }
+      const mv = st.match(/^Moves: (Sprawl|Down block|Snap|Shot) (\d) of 2/);
+      if (mv && !seen.has(mv[0])) { seen.add(mv[0]); await doMove(mv[1]); }
       const fix = st.match(/^Square stance: (.*)/);
       if (fix && !coached.includes(fix[1])) { coached.push(fix[1]); await pose(POSE['Square stance']); }
       await page.waitForTimeout(150);
     }
     await sweep(null);
-    return [...seen].filter((x) => !/^Floor: /.test(x));
+    return [...seen].filter((x) => !/^(Floor|Moves): /.test(x));
   };
 
   // calibration, posed per cue
@@ -158,6 +171,9 @@ try {
   check(await page.isHidden('#deck'), 'camera play hides the touch buttons');
   const holds = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
   check(await page.evaluate(() => RoomTimeGame.S.mode === 'rest' && RoomTimeGame.S.prestart), 'a get-set countdown before round one');
+  const mvs = await page.evaluate(() => RoomTimeLab.L.cal.moves || {});
+  check(['sprawl', 'down_block', 'snap', 'shot'].every((m) => mvs[m] && mvs[m].n >= 1), 'the warm-up taught his moves: ' + Object.keys(mvs).map((m) => m + ' ' + mvs[m].n).join(', '));
+  check(await page.evaluate(() => RoomTimeLab.play.det.taught && !!RoomTimeLab.play.det.taught.sprawl), 'and the detector reads against them');
   await page.waitForFunction(() => RoomTimeGame.S.mode === 'work', null, { timeout: 60000 });
   check(await page.evaluate(() => RoomTimeGame.S.mode) === 'work' && holds.join() === 'Standing,Square stance,Staggered stance', 'then the warm-in starts after the holds and the shuffle: ' + holds.join(', '));
   await page.evaluate(() => { RoomTimeGame.S.clock = 999; });   // keep this round going through the move checks
@@ -194,6 +210,7 @@ try {
   const quick = await followCues(async () => await page.evaluate(() => RoomTimeGame.S.mode !== 'calib'));
   await page.waitForFunction(() => RoomTimeGame.S.mode === 'work', null, { timeout: 60000 });
   check(quick.join() === 'Standing', 'a recent calibration: the quick check is standing, then the shuffle: ' + quick.join(', '));
+  check(await page.evaluate(() => !!(RoomTimeLab.L.cal.moves && RoomTimeLab.L.cal.moves.sprawl) && !RoomTimeGame.S.calibView.steps.some((x) => x.key === 'moves')), 'the taught moves are kept: no teaching again');
   const cv = await page.evaluate(() => RoomTimeGame.S.calibView);
   check(cv && cv.steps.map((x) => x.name + ':' + x.state).join() === 'Standing:done,Floor:done' && cv.sweep.left < -0.8 && cv.sweep.right > 0.8,
     'the warm-up shows each part register: ' + (cv && cv.steps.map((x) => x.name + ':' + x.state).join()) + `, edges ${cv && cv.sweep.left.toFixed(2)} and ${cv && cv.sweep.right.toFixed(2)}`);

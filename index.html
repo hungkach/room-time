@@ -260,6 +260,8 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
         <summary>History and records</summary>
         <div class="sum" id="histRec"></div>
         <ol class="hist" id="histList"></ol>
+        <div class="sum" id="movesNote"></div>
+        <div class="actions one"><button class="secondary" id="reteachBtn">Teach my moves again</button></div>
         <div class="actions"><button class="secondary" id="backupBtn">Back up</button><button class="secondary" id="restoreBtn">Restore</button></div>
         <div class="actions"><button class="secondary" id="csvBtn">Export CSV</button><button class="secondary" id="histClear">Clear history</button></div>
         <input type="file" id="restoreIn" accept=".json,application/json" hidden>
@@ -639,36 +641,153 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
   RT.MOVES = {windowMs:1200, maxDropMs:650, settleMs:90, minDrop:0.2, shotGrow:0.07, sprawlLevel:0.24, sprawlDrop:0.26,
     blockDrop:0.04, blockHands:-0.3, blockFrom:0.1, blockGrow:0.03,
     snapFrom:0.75, snapTo:0.25, snapMs:500, snapHold:0.15, refractoryMs:900};
+  // Moves you've taught it (Mark, 11/8: sprawls and down blocks never registered; no mats means no sprawl to the
+  // floor, no room means a shot is often a shot fake). taught: {shot, sprawl, down_block: {drop, lo, grow, wh, ms},
+  // snap: {from, to, ms}}, each the middle of your own reps (RT.learnMoves). A taught drop move is matched by its
+  // nearest signature (depth, how low, stepping in, where the hands went, speed), once it reaches depthK of your own
+  // depth; a taught snap by your own hand path. The rules above still read the clear cases.
+  RT.TAUGHT = {depthK:0.7, handTravel:0.3, handK:0.6, tol:3.2, scale:{drop:0.08, lo:0.08, grow:0.04, wh:0.3, ms:250}, snapK:0.35, snapMsK:1.8};
+  const DROP_MOVES = ['shot', 'sprawl', 'down_block'];
+  // The biggest drop in some frames: the lowest point, the highest point before it, and the hands and hips there.
+  // where a drop began: the last frame before the lowest point that's still at the high point (not the first: a long
+  // hold before the move isn't part of it)
+  const topBefore = (h, lo) => {
+    let mx = -Infinity; for (const x of h) { if (x.t >= lo.t) break; if (x.level > mx) mx = x.level; }
+    let top = lo; for (const x of h) { if (x.t >= lo.t) break; if (x.level >= mx - 0.01) top = x; }
+    return top;
+  };
+  RT.dropOf = function(frames){
+    const h = (frames || []).filter(x => x && num(x.level));
+    if (h.length < 2) return null;
+    let lo = h[0]; for (const x of h) if (x.level < lo.level - 0.005) lo = x;
+    const top = topBefore(h, lo);
+    const near = h.filter(x => Math.abs(x.t - lo.t) <= 150 && num(x.wristH)).map(x => x.wristH);
+    return {drop:top.level - lo.level, lo:lo.level, ms:lo.t - top.t, grow:num(lo.hipW) && num(top.hipW) && top.hipW > 0 ? lo.hipW/top.hipW - 1 : 0,
+      wh:near.length ? RT.median(near) : (num(lo.wristH) ? lo.wristH : null), whTop:num(top.wristH) ? top.wristH : null, t:lo.t, top:top.t};
+  };
+  // The hand path of a snap in some frames: the highest hands, then the lowest after them.
+  RT.snapOf = function(frames){
+    const h = (frames || []).filter(x => x && num(x.wristH));
+    if (h.length < 2) return null;
+    // the lowest hands, then the last frame before them still at the highest (where the snap began)
+    let lo = null, mx = -Infinity;
+    for (const x of h) if (x.wristH > mx) mx = x.wristH;
+    let hi = null; for (const x of h) if (x.wristH >= mx - 0.03) hi = x;
+    for (const x of h) if (x.t > hi.t && (!lo || x.wristH < lo.wristH)) lo = x;
+    if (lo) { let lastHi = hi; for (const x of h) { if (x.t >= lo.t) break; if (x.wristH >= mx - 0.03) lastHi = x; } hi = lastHi; }
+    return lo ? {from:hi.wristH, to:lo.wristH, ms:lo.t - hi.t, hold:num(hi.level) && num(lo.level) ? Math.abs(lo.level - hi.level) : 0} : null;
+  };
+  // Your signature for each move from the reps you showed it: {move: [frames of one rep, ...]}. A rep that shows no
+  // real movement (no drop, no hand path) is left out; the middle of the rest is the signature.
+  RT.learnMoves = function(reps){
+    const out = {};
+    for (const m of Object.keys(reps || {})) {
+      const got = [];
+      for (const fr of reps[m] || []) {
+        if (m === 'snap') { const v = RT.snapOf(fr); if (v && v.from - v.to >= 0.3) got.push(v); }
+        else { const v = RT.dropOf(fr); if (v && v.drop >= 0.03) got.push(v); }
+      }
+      if (!got.length) continue;
+      const mid = k => RT.median(got.map(g => g[k]).filter(num));
+      out[m] = m === 'snap' ? {from:mid('from'), to:mid('to'), ms:mid('ms'), n:got.length}
+        : {drop:mid('drop'), lo:mid('lo'), grow:mid('grow'), wh:mid('wh'), whTop:mid('whTop'), ms:mid('ms'), n:got.length};
+    }
+    return out;
+  };
+  // The taught move a drop is nearest, if it's within reach of your own: null when none is.
+  RT.matchTaught = function(c, taught){
+    const T = RT.TAUGHT, sc = T.scale;
+    let best = null;
+    for (const m of DROP_MOVES) {
+      const g = taught && taught[m];
+      if (!g || !num(g.drop) || c.drop < T.depthK*g.drop) continue;
+      // and get near your own low point: dropping from standing back into your stance is not a move
+      if (num(g.lo) && num(c.lo) && c.lo > g.lo + (1 - T.depthK)*g.drop) continue;
+      // a move whose hands travel (a block, a sprawl) needs most of that travel: a sink in your stance is not a block
+      if (num(g.whTop) && num(g.wh) && Math.abs(g.whTop - g.wh) >= T.handTravel) {
+        if (!num(c.wh)) continue;
+        const toward = g.whTop > g.wh ? c.wh <= g.wh + (1 - T.handK)*(g.whTop - g.wh) : c.wh >= g.wh - (1 - T.handK)*(g.wh - g.whTop);
+        if (!toward) continue;
+      }
+      let d2 = 0;
+      for (const k of ['drop', 'lo', 'grow', 'wh', 'ms']) if (num(c[k]) && num(g[k])) {
+        // going deeper or faster than you taught is still the move
+        let dv = c[k] - g[k];
+        if ((k === 'drop' && dv > 0) || (k === 'lo' && dv < 0) || (k === 'ms' && dv < 0)) dv *= 0.25;
+        // hands further along the way they went in your reps
+        if (k === 'wh' && num(g.whTop) && Math.sign(dv) === Math.sign(g.wh - g.whTop)) dv *= 0.25;
+        d2 += Math.pow(dv/sc[k], 2);
+      }
+      const d = Math.sqrt(d2);
+      if (d <= T.tol && (!best || d < best.d)) best = {m, d};
+    }
+    return best;
+  };
   RT.MoveDetector = class {
-    constructor(opts){ this.o = Object.assign({}, RT.MOVES, opts || {}); this.h = []; this.last = -1e9; }
+    constructor(opts){
+      const o = this.o = Object.assign({}, RT.MOVES, opts || {});
+      this.taught = o.taught || null; this.h = []; this.last = -1e9; this.cands = [];
+      // a slow taught move needs a longer look back
+      const slow = this.taught ? Math.max(0, ...DROP_MOVES.map(m => this.taught[m] ? this.taught[m].ms*1.6 : 0), this.taught.snap ? this.taught.snap.ms*T0.snapMsK : 0) : 0;
+      this.maxMs = Math.max(o.maxDropMs, slow); o.windowMs = Math.max(o.windowMs, this.maxMs + 500);
+    }
     // s: {t: ms, level, hipW, wristH}; returns {type, from, to, ms, grow} or null
     push(s){
-      const o = this.o, h = this.h;
+      const o = this.o, h = this.h, tg = this.taught;
       if (!s || !num(s.level)) return null;
       h.push(s); while (h.length && s.t - h[0].t > o.windowMs) h.shift();
       if (s.t - this.last < o.refractoryMs) return null;
       // the lowest point so far, and the highest point before it
       let lo = h[0]; for (const x of h) if (x.level < lo.level - 0.005) lo = x;   // the first time it got this low
-      let top = lo; for (const x of h) { if (x.t >= lo.t) break; if (x.level > top.level) top = x; }
+      const top = topBefore(h, lo);
       const drop = top.level - lo.level, ms = lo.t - top.t;
-      if (ms <= o.maxDropMs && s.t - lo.t >= o.settleMs) {
+      if (ms <= this.maxMs && s.t - lo.t >= o.settleMs) {
         const grow = num(lo.hipW) && num(top.hipW) && top.hipW > 0 ? lo.hipW/top.hipW - 1 : 0;
         // hands that were up in your stance (any frame since the drop began) and are at your knees now
         const handsWereUp = h.some(x => x.t >= top.t - 200 && num(x.wristH) && x.wristH >= o.blockFrom);
+        const c = {drop, lo:lo.level, ms, grow, wh:num(s.wristH) ? s.wristH : lo.wristH};
+        if (drop >= 0.03) this.note(lo.t, Object.assign({kind:'drop'}, c));
         let type = null;
-        if (drop >= o.minDrop && grow >= o.shotGrow) type = 'shot';
-        else if (drop >= o.sprawlDrop && lo.level <= o.sprawlLevel && grow <= 0.02) type = 'sprawl';
-        else if (drop >= o.blockDrop && grow <= o.blockGrow && num(s.wristH) && s.wristH <= o.blockHands && handsWereUp) type = 'down_block';
+        const hit = tg && RT.matchTaught(c, tg);
+        if (hit) type = hit.m;
+        else if (ms <= o.maxDropMs) {
+          // the rules still read the clear cases (a real shot with a step, a full sprawl)
+          if (drop >= o.minDrop && grow >= o.shotGrow) type = 'shot';
+          else if (drop >= o.sprawlDrop && lo.level <= o.sprawlLevel && grow <= 0.02) type = 'sprawl';
+          else if (drop >= o.blockDrop && grow <= o.blockGrow && num(s.wristH) && s.wristH <= o.blockHands && handsWereUp) type = 'down_block';
+        }
         if (type) return this.fire(s, {type, from:top.level, to:lo.level, ms, grow});
       }
-      // snap: hands from tie height to the belt, fast, level held
+      // snap: hands from tie height to the belt, fast, level held (yours, once taught)
       let hi = null; for (const x of h) if (num(x.wristH) && (!hi || x.wristH >= hi.wristH - 0.02)) hi = x;   // the latest high point
-      if (hi && num(s.wristH) && hi.wristH >= o.snapFrom && s.wristH <= o.snapTo && s.t - hi.t <= o.snapMs && Math.abs(s.level - hi.level) <= o.snapHold)
-        return this.fire(s, {type:'snap', from:hi.wristH, to:s.wristH, ms:s.t - hi.t, grow:0});
+      if (hi && num(s.wristH)) {
+        const sn = tg && tg.snap, range = sn ? sn.from - sn.to : 0;
+        const from = sn ? sn.from - T0.snapK*range : o.snapFrom, to = sn ? sn.to + T0.snapK*range : o.snapTo, msMax = sn ? Math.max(o.snapMs, sn.ms*T0.snapMsK + 150) : o.snapMs;
+        if (hi.wristH - s.wristH >= 0.3) this.note(hi.t, {kind:'snap', from:hi.wristH, to:s.wristH, ms:s.t - hi.t});
+        if (hi.wristH >= from && s.wristH <= to && s.t - hi.t <= msMax && Math.abs(s.level - hi.level) <= o.snapHold)
+          return this.fire(s, {type:'snap', from:hi.wristH, to:s.wristH, ms:s.t - hi.t, grow:0});
+      }
       return null;
+    }
+    // what it saw, kept a few seconds, so a call it didn't read can say what came closest (RT.nearest)
+    note(key, c){
+      const same = this.cands.find(x => x.key === key && x.kind === c.kind);
+      if (same) { Object.assign(same, c); return; }
+      this.cands.push(Object.assign({key}, c));
+      while (this.cands.length && key - this.cands[0].key > 8000) this.cands.shift();
+    }
+    // the biggest movement it saw since t (ms): the deepest drop, or the longest hand path for a snap
+    nearest(t, kind){
+      const cs = this.cands.filter(c => c.key >= t && (!kind || c.kind === kind));
+      if (!cs.length) return null;
+      const size = c => c.kind === 'snap' ? c.from - c.to : c.drop;
+      const b = cs.reduce((a, c) => size(c) > size(a) ? c : a);
+      const r = {}; for (const k of Object.keys(b)) if (k !== 'key') r[k] = typeof b[k] === 'number' ? Math.round(b[k]*1000)/1000 : b[k];
+      return r;
     }
     fire(s, ev){ this.last = s.t; this.h = [s]; return ev; }
   };
+  const T0 = RT.TAUGHT;
   // Stance form, the points a coach checks and the camera can see, in the order you'd fix them. Each is
   // {key, ok, say}; say is the cue for when it's off. kind: 'square' or 'stagger'. Thresholds are broad on
   // purpose: they catch a stance that's clearly off, not a style.
@@ -1401,6 +1520,12 @@ function renderTrain(){
       x.onTime != null ? `${Math.round(x.onTime*100)}% on time` : '', x.score ? `live ${x.score.you}–${x.score.opp}` : '', x.partial ? 'ended early' : ''].filter(Boolean);
     return `<li>${esc(when)} · ${what}${bits.length ? ' · ' + esc(bits.join(', ')) : ''}</li>`;
   }).join('');
+  // the moves you've taught the camera, and whether it'll ask again next session
+  const c = readCal(), mv = c && c.moves ? Object.keys(c.moves).map(m => m === 'down_block' ? 'down block' : m) : [];
+  let again = false; try { again = JSON.parse(localStorage.getItem('roomtime.reteach') || 'false'); } catch(e) {}
+  $('movesNote').textContent = again ? 'Your moves will be taught again at the next camera session.'
+    : mv.length ? `Moves taught ${new Date(c.movesAt).toLocaleDateString(undefined, {month:'short', day:'numeric'})}: ${mv.join(', ')}.`
+    : 'Your moves are taught at the next camera session: each one twice.';
   $('csvBtn').disabled = !h.length; $('histClear').disabled = !h.length; $('backupBtn').disabled = !h.length && !readCal();
 }
 // The CSV goes through the share sheet where there is one (Files, Numbers, Mail on iPad), else downloads.
@@ -1416,6 +1541,7 @@ async function shareFile(text, name, type, title){
 const day = () => new Date().toISOString().slice(0, 10);
 function exportCSV(){ return shareFile(globalThis.RoomTime.toCSV(loadHistory()), `room-time-${day()}.csv`, 'text/csv', 'Room Time sessions'); }
 $('csvBtn').addEventListener('click', exportCSV);
+$('reteachBtn').addEventListener('click', () => { try { localStorage.setItem('roomtime.reteach', 'true'); } catch(e) {} renderTrain(); });
 // Back up: every session and the calibration in one file (save it to Files); Restore merges one back in.
 const readCal = () => { try { return JSON.parse(localStorage.getItem('roomtime.cal') || 'null'); } catch(e) { return null; } };
 $('backupBtn').addEventListener('click', () => {
@@ -1721,11 +1847,33 @@ function progPace(w){
 // (without today's ease) so the next session carries on from here.
 // how: 'late' (the move came after the window, rt is when), 'missed' (never came: too tired to do it, so it says
 // nothing about your reads and the staircase doesn't step), or 'wrong' (a different move).
+// A move the camera has never read for you (not taught, never registered) that doesn't come is 'undetected', not
+// missed: it says nothing about fatigue (Mark, 11/8: undetected sprawls were shortening his rounds). A call it didn't
+// read keeps the closest thing it saw (t.near: depth, speed, hands), numbers only, so his moves can be tuned from his
+// own sessions.
+const CAMERA_MOVES = {sprawl:'drop', block:'drop', shot:'drop', snap:'snap'};
+function provenMoves(){
+  if (S.proven) return S.proven;
+  const p = S.proven = new Set();
+  for (const s of loadHistory()) for (const t of s.trials || []) if (t.h) p.add(t.m);
+  const G = globalThis.RoomTimeGame, tm = G && G.taughtFn ? G.taughtFn() : [];
+  for (const m of tm) p.add(m === 'down_block' ? 'block' : m);
+  return p;
+}
 function recordMove(m, hit, rt, stair, how){
   if (!S || S.auto) return;
-  const k = moveKey(m), t = {m:k, h:!!hit, rt:(hit || how === 'late') && rt != null ? Math.round(rt*1000)/1000 : null};
+  const k0 = moveKey(m);
+  if (S.cam && CAMERA_MOVES[k0]) {
+    if (hit) provenMoves().add(k0);
+    else if (how === 'missed' && !provenMoves().has(k0)) how = 'undetected';
+  }
+  const k = k0, t = {m:k, h:!!hit, rt:(hit || how === 'late') && rt != null ? Math.round(rt*1000)/1000 : null};
+  if (!hit && S.cam && CAMERA_MOVES[k] && globalThis.RoomTimeGame.nearFn) {
+    const n = globalThis.RoomTimeGame.nearFn(cueWindow(m) + RoomTime.PROG.lateS + 0.5, CAMERA_MOVES[k]);
+    if (n) t.near = n;
+  }
   if (how) t[how] = 1;
-  if (S.R && !hit) { if (how === 'missed') S.R.missed++; else if (how === 'late') S.R.late++; }
+  if (S.R && !hit) { if (how === 'missed') S.R.missed++; else if (how === 'late') S.R.late++; else if (how === 'undetected') S.R.undetected = (S.R.undetected || 0) + 1; }
   if (S.R && stair) S.R.calls++;
   const P = globalThis.RoomTime.PROG, ph = S.plan[S.r] && S.plan[S.r].phase;
   if (stair && how !== 'missed' && S.prog && S.prog.kind === 'session' && S.windows && ph !== 'warm') {
@@ -1748,7 +1896,7 @@ function roundRecord(R){
   const r = {phase:R.phase, work:Math.round(R.work*10)/10, plan:R.plan, rest:R.rest, stancePct:R.work ? Math.round(1000*R.inBand/R.work)/1000 : null,
     startPct:R.startT >= 10 ? Math.round(1000*R.startIn/R.startT)/1000 : null, breakT:R.breakT == null ? null : Math.round(R.breakT*10)/10,
     highPct:R.work ? Math.round(1000*R.highT/R.work)/1000 : null, uprightPct:R.work ? Math.round(1000*R.upT/R.work)/1000 : null,
-    lowPct:R.work ? Math.round(1000*R.lowT/R.work)/1000 : null, calls:R.calls, late:R.late, missed:R.missed};
+    lowPct:R.work ? Math.round(1000*R.lowT/R.work)/1000 : null, calls:R.calls, late:R.late, missed:R.missed, undetected:R.undetected || 0};
   if (R.phase === 'hold') { r.hold = R.holdS == null ? null : Math.round(R.holdS*10)/10; r.stancePct = null; }
   return r;
 }
@@ -2493,7 +2641,8 @@ function drawCalib(){
   }
   ctx.fillStyle = COL.ink; ctx.font = FB(500, 15); ctx.fillText(S.calibNote || '', W/2, H*0.7);
   ctx.fillStyle = COL.muted; ctx.font = FB(500, 13);
-  ctx.fillText(v && v.steps.length === 2 ? 'Quick check: stand, then shuffle to your left and pause, then to your right and pause.'
+  ctx.fillText(v && v.steps.some(x => x.key === 'moves' && x.state === 'now') ? 'Show each move twice when it is called, then back to your stance.'
+    : v && v.steps.filter(x => x.key !== 'moves').length === 2 ? 'Quick check: stand, then shuffle to your left and pause, then to your right and pause.'
     : 'Three holds, then shuffle to your left and pause, then to your right and pause.', W/2, H*0.7 + 24);
 }
 
@@ -2526,6 +2675,7 @@ function buildDebrief(){
   else if (late - early >= 8) note = `Stance got better as the session went, ${early}% early and ${late}% late. Warm-in may need to run longer.`;
   else note = `Stance held steady across the session, about ${pct}% throughout.`;
   const hits = rs.reduce((a, r) => a + r.hits, 0), misses = rs.reduce((a, r) => a + r.misses, 0);
+  const undet = S.trials.filter(t => t.undetected), undetBy = RoomTime.PROG.moves.filter(m => undet.some(t => t.m === m)).map(m => `${undet.filter(t => t.m === m).length} ${RoomTime.MOVE_NAMES[m]}`);
   const sumOf = k => rs.reduce((a, r) => a + (r[k] || 0), 0), lateN = sumOf('late'), missed = sumOf('missed'), highT = sumOf('highT'), upT = sumOf('upT'), lowT = sumOf('lowT');
   const goes = S.goes.map((gg, i) => `<div><span>Live go${S.goes.length > 1 ? ' ' + (i + 1) : ''}</span><span>You ${gg.you} · ${gg.opp} Opp</span></div>`).join('');
   $('debriefIn').innerHTML = `
@@ -2542,6 +2692,7 @@ function buildDebrief(){
     <div class="card"><h3>Session</h3><div class="rows">
       <div><span>Drill calls on time</span><span>${hits} of ${hits + misses}</span></div>
       ${lateN + missed ? `<div><span>Late, missed</span><span>${lateN} late (slow read), ${missed} missed (not done)</span></div>` : ''}
+      ${undet.length ? `<div><span>Not detected</span><span>${undetBy.join(', ')} (the camera hasn't read these for you yet; not counted as fatigue)</span></div>` : ''}
       <div><span>Out of stance</span><span>high ${Math.round(100*highT/Math.max(work, 0.01))}%, upright ${Math.round(100*upT/Math.max(work, 0.01))}%, low ${Math.round(100*lowT/Math.max(work, 0.01))}%</span></div>
       ${goes}
       <div><span>Explosive reps</span><span>${S.explosive} of ${S.cap} cap</span></div>
@@ -3208,8 +3359,10 @@ async function calibrate(poses){
 }
 
 function setCal(caps){
-  const f = L.cur;
+  const f = L.cur, prev = cal;
   cal = RT.buildCal(caps, {at:new Date().toISOString(), aspect:f ? f.aspect : null, w:f ? f.w : null, h:f ? f.h : null, model:L.model, camera:L.cam ? L.cam.label : ''});
+  // your taught moves stay until you teach them again
+  if (prev && prev.moves) { cal.moves = prev.moves; cal.movesAt = prev.movesAt; }
   L.cal = cal;
 }
 const formTxt = st => st && st.form && st.form.length ? ` · <b style="color:#e2a23b">check ${st.form.join(', ')}</b>` : '';
@@ -3365,7 +3518,48 @@ async function startCamPlay(){
     await calibrate(quick ? ['stand', 'sweep'] : [...RT.POSES, 'sweep']);
     if (cal && cal.stand && cal.square) break;
   }
+  // your moves: once, and again when asked from the menu
+  if (play.on && !play.skipCal && cal && cal.stand && (!cal.moves || store.get('reteach'))) await teachMoves();
+  play.det = new RT.MoveDetector({taught:cal && cal.moves});
   if (play.on && G.S && G.S.mode === 'calib') G.begin();
+}
+// Show me your moves (Mark, 11/8): each move twice, once (and again when asked from the menu). The detector then
+// reads your moves against your own reps (RT.learnMoves, RT.MoveDetector's taught), kept on the calibration as
+// cal.moves. A rep it can't see any movement in is asked again once, then that move is left to the rules.
+const TEACH = [['sprawl', 'Sprawl', 'Sprawl. Go.'], ['down_block', 'Down block', 'Down block. Go.'],
+  ['snap', 'Snap', 'Snap. Hands up like a tie, then snap down. Go.'], ['shot', 'Shot', 'Shot. A fake is fine. Go.']];
+async function teachMoves(){
+  if (!claim('cal')) return null;
+  cview.steps.push({key:'moves', name:'Moves', state:'now'}); cview.hold = null; cview.sweep = null; cviewSync();
+  say('Show me your moves, each one twice.'); note('Moves');
+  const reps = {};
+  if (await wait(FAST ? 600 : 3000, 'cal')) {
+    for (const [m, name, line] of TEACH) {
+      reps[m] = [];
+      for (let i = 0, misses = 0; i < 2 && misses < 2; ) {
+        say(i ? 'Again. Go.' : line); note(`Moves: ${name} ${i + 1} of 2`);
+        if (!await wait(FAST ? 300 : 900, 'cal')) break;
+        beep(880, 0.08);
+        const fr = [], fn = f => { if (f.m && f.r) { const x = RT.moveInput(f.t, f.m, f.r); if (x) fr.push(x); } };
+        L.on.add(fn); const ok = await wait(FAST ? 1800 : 3000, 'cal'); L.on.delete(fn);
+        if (!ok) break;
+        if (RT.learnMoves({[m]:[fr]})[m]) { reps[m].push(fr); i++; beep(990, 0.1); }
+        else { misses++; say("Didn't catch that."); }
+        note('Moves: back to your stance');
+        if (!await wait(FAST ? 400 : 1500, 'cal')) break;
+      }
+      if (cancelled.cal || !L.src) break;
+    }
+  }
+  const taught = RT.learnMoves(reps), got = Object.keys(taught);
+  if (got.length && cal) {
+    cal.moves = Object.assign({}, cal.moves || {}, taught); cal.movesAt = new Date().toISOString();
+    L.cal = cal; store.set('cal', cal); store.set('reteach', false);
+    say(got.length === TEACH.length ? 'Moves saved.' : `Saved ${got.length} of ${TEACH.length} moves.`);
+  }
+  cviewStep('moves', got.length ? 'done' : 'skip');
+  release('cal');
+  return taught;
 }
 // a full calibration this recent, from this camera and picture size: when it was ('today', '3 days ago'), else null
 function quickCalOk(){
@@ -3378,6 +3572,10 @@ function quickCalOk(){
   return days < 1 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago';
 }
 globalThis.RoomTimeGame.skipCalib = () => { play.skipCal = true; cancelled.cal = true; };
+// what the detector saw closest to a call it didn't read, the last secs seconds (kind: 'drop' or 'snap')
+globalThis.RoomTimeGame.nearFn = (secs, kind) => play.on && play.det ? play.det.nearest(now() - secs*1000, kind) : null;
+// the moves you've taught it (the game counts them as moves it can see)
+globalThis.RoomTimeGame.taughtFn = () => cal && cal.moves ? Object.keys(cal.moves) : [];
 globalThis.RoomTimeGame.onQuit = () => { play.on = false; globalThis.RoomTimeLab.stopSource(); dock(false); };
 $('camPlayBtn').addEventListener('click', startCamPlay);
 globalThis.RoomTimeLab.play = play;
