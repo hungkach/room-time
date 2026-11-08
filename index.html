@@ -99,6 +99,28 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 /* debrief */
 #debrief{position:fixed;inset:0;background:var(--bg);overflow-y:auto;z-index:5;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 #debrief .in{max-width:560px;margin:0 auto;padding-block:24px 34px;display:flex;flex-direction:column;gap:20px}
+#progress{position:fixed;inset:0;background:var(--bg);overflow-y:auto;z-index:5;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+#progress .in{max-width:640px;margin:0 auto;padding-block:24px 34px;display:flex;flex-direction:column;gap:16px}
+#progress h2{font-family:var(--f-display);font-weight:700;font-size:2.6rem;line-height:.9;margin:0}
+#progress .sub,.card .sub{color:var(--muted);font-size:.8rem;margin-top:-4px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+@media (max-width:560px){.tiles{grid-template-columns:repeat(2,1fr)}}
+.tiles div{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:12px 10px}
+.tiles b{display:block;font-family:var(--f-display);font-weight:700;font-size:2rem;line-height:1;font-variant-numeric:tabular-nums}
+.tiles span{font-size:.78rem;color:var(--muted)}
+.chart{position:relative;touch-action:pan-y}
+.chart svg{display:block;width:100%;overflow:visible}
+.chart text{font-family:var(--f-body,inherit);font-size:11px;fill:var(--muted);font-variant-numeric:tabular-nums}
+.chart text.val{fill:var(--ink);font-weight:600}
+.tip{position:absolute;pointer-events:none;z-index:2;background:var(--panel-2);border:1px solid var(--edge);border-radius:8px;padding:6px 8px;font-size:.78rem;line-height:1.35;white-space:nowrap;color:var(--ink)}
+.legend2{display:flex;gap:12px;flex-wrap:wrap;font-size:.78rem;color:var(--muted)}
+.legend2 i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;background:var(--c);vertical-align:-1px}
+.legend2 i.ln{height:2px;width:14px;border-radius:1px;vertical-align:3px}
+table.data{width:100%;font-size:.78rem;border-collapse:collapse;font-variant-numeric:tabular-nums}
+table.data th{color:var(--muted);font-weight:500;text-align:right;padding:4px 6px;border-bottom:1px solid var(--edge)}
+table.data td{text-align:right;padding:4px 6px;border-bottom:1px solid var(--panel-2)}
+table.data th:first-child,table.data td:first-child{text-align:left}
+.tablewrap{overflow-x:auto}
 #debrief h2{font-family:var(--f-display);font-weight:700;font-size:2.6rem;line-height:.9;margin:0}
 #debrief .sub{color:var(--muted);margin-top:6px}
 .big3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
@@ -256,6 +278,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       <ul class="why" id="trainWhy"></ul>
       <div class="sum" id="trainNums"></div>
       <div class="sum" id="trainLevel"></div>
+      <div class="actions one"><button class="secondary" id="progressBtn">Progress</button></div>
       <details id="histBox">
         <summary>History and records</summary>
         <div class="sum" id="histRec"></div>
@@ -357,6 +380,7 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 </div>
 
 <section id="debrief" hidden><div class="in" id="debriefIn"></div></section>
+<section id="progress" hidden><div class="in" id="progressIn"></div></section>
 
 <script id="rt-metrics">
 // Room Time metrics: pure functions over MediaPipe landmark lists, no DOM.
@@ -1304,6 +1328,53 @@ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
       return Object.assign({}, x, {work:w, rest:cycle - w});
     });
     return {k:kw, kr, rounds:out};
+  };
+
+  // ---------- progress (Mark, 11/6: "its own tab showing progress and trends", and each session against your recent
+  // ones). Plain facts from the saved sessions, for the Progress screen and the debrief.
+  // One session at a glance: the stance split over its rounds (work-weighted; warm-ins and holds left out), its
+  // calls, and the longest round you held.
+  RT.sessionSummary = function(s){
+    const rs = (s.rounds || []).filter(r => r.phase !== 'warm' && r.phase !== 'hold' && num(r.work) && r.work > 0);
+    const W = rs.reduce((a, r) => a + r.work, 0), part = k => W ? rs.reduce((a, r) => a + (num(r[k]) ? r[k]*r.work : 0), 0)/W : null;
+    const stance = part('stancePct'), high = part('highPct'), upright = part('uprightPct');
+    const low = num(stance) && num(high) && num(upright) ? Math.max(0, 1 - stance - high - upright) : part('lowPct');
+    const ts = s.trials || [], calls = ts.filter(t => !t.undetected);
+    const held = rs.filter(r => num(r.stancePct) && r.stancePct >= RT.PROG.stanceAt && r.work >= 10).map(r => r.work);
+    const sum = k => rs.reduce((a, r) => a + (num(r[k]) ? r[k] : 0), 0);
+    return {date:s.date, minutes:num(s.minutes) ? s.minutes : null, day:s.day === 'technique' ? 'light' : s.day, open:!!s.open,
+      stance, high, upright, low, load:RT.loadOf(s), onTime:calls.length ? calls.filter(t => t.h).length/calls.length : null,
+      late:sum('late'), missed:sum('missed'), undetected:ts.filter(t => t.undetected).length,
+      longest:held.length ? Math.max(...held) : null, explosive:num(s.explosive) ? s.explosive : null};
+  };
+  // Your numbers after each session, oldest first: what the planner knew then.
+  RT.progressSeries = function(history){
+    const done = (history || []).filter(s => s && s.date && (s.rounds || []).length).slice().sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+    return done.map((s, i) => {
+      const t = Date.parse(s.date), st = RT.state(done.slice(0, i + 1), t + 60e3), q = RT.qualities(st);
+      return Object.assign(RT.sessionSummary(s), {t, cap:st.cap, rest:st.rec*60, reads:q.readWindow, tol:st.tol});
+    });
+  };
+  // Each week's training load (weeks from Monday), with your usual week as it stood at the end of it.
+  RT.weeklyLoads = function(history, now){
+    const done = (history || []).filter(s => s && s.date && (s.rounds || []).length);
+    if (!done.length) return [];
+    const monday = t => { const d = new Date(t); d.setUTCHours(0, 0, 0, 0); return d.getTime() - ((d.getUTCDay() + 6) % 7)*DAY; };
+    const first = monday(Math.min(...done.map(s => Date.parse(s.date)))), out = [];
+    for (let w = first; w <= now; w += 7*DAY) {
+      const ss = done.filter(s => { const t = Date.parse(s.date); return t >= w && t < w + 7*DAY; });
+      // usual: your usual week as the planner saw it going into this one (never under usual0)
+      out.push({start:w, load:ss.reduce((a, s) => a + RT.loadOf(s), 0), sessions:ss.length, usual:RT.state(done.filter(s => Date.parse(s.date) < w), w).fit});
+    }
+    return out;
+  };
+  // This session against your last few (n) before it: each line {key, label, now, before, better: 'up' | 'down'}.
+  RT.sessionCompare = function(rec, history, n){
+    const prior = (history || []).filter(s => s && s.date && s.date < rec.date && (s.rounds || []).length).slice(-(n || 5)).map(RT.sessionSummary);
+    const cur = RT.sessionSummary(rec), avg = k => { const v = prior.map(p => p[k]).filter(num); return v.length ? v.reduce((a, b) => a + b, 0)/v.length : null; };
+    const rows = [['stance', 'In stance', 'up'], ['high', 'High stance', 'down'], ['upright', 'Upright', 'down'], ['longest', 'Longest round held', 'up'],
+      ['onTime', 'Calls on time', 'up'], ['late', 'Late calls', 'down'], ['missed', 'Missed calls', 'down'], ['minutes', 'Minutes', 'up']];
+    return {n:prior.length, rows:rows.map(([key, label, better]) => ({key, label, better, now:cur[key], before:avg(key)}))};
   };
 
   // Your level: the highest one that 2 of your last 5 full sessions meet, and what the next one needs.
@@ -2660,6 +2731,168 @@ function updateTopBar(){
   }
 }
 
+/* ---------- charts (the Progress screen and the debrief): plain SVG, one axis each, thin marks, a tooltip on
+   hover or touch ---------- */
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, a) => { const e = document.createElementNS(SVGNS, tag); for (const k in a) e.setAttribute(k, a[k]); return e; };
+const escH = t => String(t).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c]);
+const shortDate = t => new Date(t).toLocaleDateString(undefined, {month:'short', day:'numeric'});
+function niceTicks(lo, hi, n){
+  const span = Math.max(hi - lo, 1e-9), raw = span/n, mag = Math.pow(10, Math.floor(Math.log10(raw))), f = raw/mag;
+  const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10)*mag;
+  const a = Math.floor(lo/step)*step, b = Math.ceil(hi/step)*step, out = [];
+  for (let v = a; v <= b + step*1e-6; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+// the tooltip: placed above the point, kept inside the box
+function chartTip(box){
+  let tip = box.querySelector('.tip');
+  if (!tip) { tip = document.createElement('div'); tip.className = 'tip'; tip.hidden = true; box.appendChild(tip); }
+  return {show(x, y, html){ tip.innerHTML = html; tip.hidden = false; const w = tip.offsetWidth, W = box.clientWidth;
+    tip.style.left = clamp(x - w/2, 0, Math.max(0, W - w)) + 'px'; tip.style.top = Math.max(0, y - tip.offsetHeight - 10) + 'px'; },
+    hide(){ tip.hidden = true; }};
+}
+// one series over time: pts [{t, v, tip}], the last value labeled at the end
+function lineChart(box, pts, o){
+  box.innerHTML = ''; box.className = 'chart';
+  const W = Math.max(280, box.clientWidth || 320), H = 130, L = 40, R = 52, T = 12, B = 22;
+  const t0 = Math.min(...pts.map(p => p.t)), t1 = Math.max(...pts.map(p => p.t)), dt = Math.max(t1 - t0, 864e5);
+  const vs = pts.map(p => p.v), ticks = niceTicks(Math.min(...vs), Math.max(...vs), 3), y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  const X = t => L + (t - t0)/dt*(W - L - R), Y = v => T + (1 - (v - y0)/Math.max(y1 - y0, 1e-9))*(H - T - B);
+  const svg = svgEl('svg', {viewBox:`0 0 ${W} ${H}`, role:'img', 'aria-label':o.title || ''});
+  for (const v of ticks) {
+    svg.appendChild(svgEl('line', {x1:L, x2:W - R, y1:Y(v), y2:Y(v), stroke:COL['panel-2'], 'stroke-width':1}));
+    const tx = svgEl('text', {x:L - 6, y:Y(v) + 4, 'text-anchor':'end'}); tx.textContent = o.fmt(v); svg.appendChild(tx);
+  }
+  for (const [t, a] of [[t0, 'start'], [t1, 'end']]) { const tx = svgEl('text', {x:X(t), y:H - 4, 'text-anchor':a}); tx.textContent = shortDate(t); svg.appendChild(tx); }
+  svg.appendChild(svgEl('path', {d:pts.map((p, i) => (i ? 'L' : 'M') + X(p.t).toFixed(1) + ' ' + Y(p.v).toFixed(1)).join(' '), fill:'none', stroke:o.color || COL.blue, 'stroke-width':2, 'stroke-linejoin':'round', 'stroke-linecap':'round'}));
+  const last = pts[pts.length - 1];
+  svg.appendChild(svgEl('circle', {cx:X(last.t), cy:Y(last.v), r:4, fill:o.color || COL.blue, stroke:COL.panel, 'stroke-width':2}));
+  const lv = svgEl('text', {x:X(last.t) + 8, y:Y(last.v) + 4, class:'val'}); lv.textContent = o.fmt(last.v); svg.appendChild(lv);
+  // the crosshair and tooltip
+  const cross = svgEl('line', {y1:T, y2:H - B, stroke:COL.muted, 'stroke-width':1, visibility:'hidden'}), dot = svgEl('circle', {r:4, fill:o.color || COL.blue, stroke:COL.panel, 'stroke-width':2, visibility:'hidden'});
+  svg.append(cross, dot);
+  box.appendChild(svg);
+  const tip = chartTip(box);
+  const at = e => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left)*W/r.width;
+    let best = pts[0]; for (const p of pts) if (Math.abs(X(p.t) - x) < Math.abs(X(best.t) - x)) best = p;
+    for (const el of [cross, dot]) el.setAttribute('visibility', 'visible');
+    cross.setAttribute('x1', X(best.t)); cross.setAttribute('x2', X(best.t)); dot.setAttribute('cx', X(best.t)); dot.setAttribute('cy', Y(best.v));
+    tip.show(X(best.t)*r.width/W, Y(best.v)*r.height/H, `<b>${shortDate(best.t)}</b><br>${escH(o.fmt(best.v))}${best.tip ? '<br>' + escH(best.tip) : ''}`);
+  };
+  svg.addEventListener('pointermove', at); svg.addEventListener('pointerdown', at);
+  svg.addEventListener('pointerleave', () => { tip.hide(); cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); });
+}
+// columns split into parts (shares adding to 1): cols [{label, tip, parts:{key: share}}], keys [{k, name, color}]
+function stackChart(box, cols, keys){
+  box.innerHTML = ''; box.className = 'chart';
+  const W = Math.max(280, box.clientWidth || 320), H = 140, L = 36, R = 6, T = 8, B = 20;
+  const band = (W - L - R)/Math.max(cols.length, 1), bw = Math.min(24, band*0.7), Y = v => T + (1 - v)*(H - T - B);
+  const svg = svgEl('svg', {viewBox:`0 0 ${W} ${H}`, role:'img'});
+  for (const v of [0, 0.5, 1]) {
+    svg.appendChild(svgEl('line', {x1:L, x2:W - R, y1:Y(v), y2:Y(v), stroke:COL['panel-2'], 'stroke-width':1}));
+    const tx = svgEl('text', {x:L - 6, y:Y(v) + 4, 'text-anchor':'end'}); tx.textContent = Math.round(v*100) + '%'; svg.appendChild(tx);
+  }
+  const step = Math.max(1, Math.ceil(cols.length/8));
+  cols.forEach((c, i) => {
+    const x = L + band*i + (band - bw)/2;
+    let acc = 0;
+    const segs = keys.map(k => ({k, v:Math.max(0, c.parts[k.k] || 0)})).filter(g => g.v > 0.001), top = segs.length - 1;
+    segs.forEach((g, j) => {
+      const y1 = Y(acc), y2 = Y(acc + g.v); acc += g.v;
+      const h = Math.max(0, y1 - y2 - (j < top ? 2 : 0)), y = y2 + (j < top ? 0 : 0);
+      if (h <= 0) return;
+      // the top segment's data end is rounded; the rest are square, with a 2px gap between
+      const r = j === top ? Math.min(4, h, bw/2) : 0, yy = j < top ? y2 + 2 : y2;
+      svg.appendChild(svgEl('path', {fill:g.k.color, d:`M${x} ${yy + h}V${yy + r}${r ? `Q${x} ${yy} ${x + r} ${yy}` : ''}H${x + bw - r}${r ? `Q${x + bw} ${yy} ${x + bw} ${yy + r}` : ''}V${yy + h}Z`}));
+    });
+    if ((i % step === 0 && cols.length - 1 - i >= step*0.75) || i === cols.length - 1) { const tx = svgEl('text', {x:x + bw/2, y:H - 5, 'text-anchor':'middle'}); tx.textContent = c.label; svg.appendChild(tx); }
+  });
+  box.appendChild(svg);
+  const tip = chartTip(box);
+  const at = e => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left)*W/r.width, i = clamp(Math.floor((x - L)/band), 0, cols.length - 1), c = cols[i];
+    tip.show((L + band*(i + 0.5))*r.width/W, Y(1)*r.height/H + 4, `<b>${escH(c.tip || c.label)}</b><br>` + keys.map(k => `${escH(k.name)} ${Math.round(100*(c.parts[k.k] || 0))}%`).join('<br>'));
+  };
+  svg.addEventListener('pointermove', at); svg.addEventListener('pointerdown', at); svg.addEventListener('pointerleave', () => tip.hide());
+}
+// weekly load (columns) with your usual week (a line) on the same axis
+function weekChart(box, weeks){
+  box.innerHTML = ''; box.className = 'chart';
+  const W = Math.max(280, box.clientWidth || 320), H = 140, L = 36, R = 6, T = 10, B = 20;
+  const ticks = niceTicks(0, Math.max(...weeks.map(w => Math.max(w.load, w.usual)), 1), 3), y1 = ticks[ticks.length - 1];
+  const band = (W - L - R)/weeks.length, bw = Math.min(24, band*0.7), Y = v => T + (1 - v/y1)*(H - T - B), cx = i => L + band*(i + 0.5);
+  const svg = svgEl('svg', {viewBox:`0 0 ${W} ${H}`, role:'img'});
+  for (const v of ticks) {
+    svg.appendChild(svgEl('line', {x1:L, x2:W - R, y1:Y(v), y2:Y(v), stroke:COL['panel-2'], 'stroke-width':1}));
+    const tx = svgEl('text', {x:L - 6, y:Y(v) + 4, 'text-anchor':'end'}); tx.textContent = Math.round(v); svg.appendChild(tx);
+  }
+  weeks.forEach((w, i) => {
+    const h = Y(0) - Y(w.load), x = cx(i) - bw/2, r = Math.min(4, h, bw/2);
+    if (h > 0) svg.appendChild(svgEl('path', {fill:COL.blue, d:`M${x} ${Y(0)}V${Y(w.load) + r}Q${x} ${Y(w.load)} ${x + r} ${Y(w.load)}H${x + bw - r}Q${x + bw} ${Y(w.load)} ${x + bw} ${Y(w.load) + r}V${Y(0)}Z`}));
+  });
+  svg.appendChild(svgEl('path', {d:weeks.map((w, i) => (i ? 'L' : 'M') + cx(i).toFixed(1) + ' ' + Y(w.usual).toFixed(1)).join(' '), fill:'none', stroke:COL.muted, 'stroke-width':2, 'stroke-linejoin':'round'}));
+  const step = Math.max(1, Math.ceil(weeks.length/6));
+  weeks.forEach((w, i) => { if ((i % step === 0 && weeks.length - 1 - i >= step*0.75) || i === weeks.length - 1) { const tx = svgEl('text', {x:cx(i), y:H - 5, 'text-anchor':'middle'}); tx.textContent = shortDate(w.start); svg.appendChild(tx); } });
+  box.appendChild(svg);
+  const tip = chartTip(box);
+  const at = e => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left)*W/r.width, i = clamp(Math.floor((x - L)/band), 0, weeks.length - 1), w = weeks[i];
+    tip.show(cx(i)*r.width/W, Y(Math.max(w.load, w.usual))*r.height/H, `<b>Week of ${shortDate(w.start)}</b><br>${w.sessions} session${w.sessions === 1 ? '' : 's'}, load ${Math.round(w.load)}<br>usual week ${Math.round(w.usual)}`);
+  };
+  svg.addEventListener('pointermove', at); svg.addEventListener('pointerdown', at); svg.addEventListener('pointerleave', () => tip.hide());
+}
+const SPLIT = () => [{k:'stance', name:'In stance', color:COL.green}, {k:'high', name:'High', color:COL.amber}, {k:'upright', name:'Upright', color:COL.red}, {k:'low', name:'Low', color:COL.blue}];
+const legendHTML = keys => `<div class="legend2">${keys.map(k => `<span><i style="--c:${k.color}"${k.line ? ' class="ln"' : ''}></i>${escH(k.name)}</span>`).join('')}</div>`;
+
+/* ---------- the Progress screen (Mark, 11/6): your numbers over time, plain facts ---------- */
+function showProgress(){
+  const RT = globalThis.RoomTime, h = loadHistory(), now = Date.now(), el = $('progressIn');
+  const secF = v => v >= 60 ? `${Math.floor(v/60)}:${String(Math.round(v%60)).padStart(2, '0')}` : `${Math.round(v)} s`;
+  const ser = RT.progressSeries(h), wk = RT.weeklyLoads(h, now), st = RT.state(h, now);
+  $('menu').hidden = true; $('progress').hidden = false; $('progress').scrollTop = 0;
+  const head = `<div><h2>Progress</h2><div class="sub" style="margin-top:6px">From every saved session on this device.</div></div>`;
+  const back = `<div class="actions one"><button class="secondary" id="progressBack">Back</button></div>`;
+  if (ser.length < 2) {
+    el.innerHTML = head + `<div class="card"><div class="sum">The trends start after 2 camera sessions${ser.length ? ' (1 so far)' : ''}.</div></div>` + back;
+  } else {
+    const mins = ser.reduce((a, p) => a + (p.minutes || 0), 0), longest = Math.max(0, ...ser.map(p => p.longest || 0));
+    const charts = [
+      ['cap', 'Rounds you hold', 'seconds of work at 75% or more in stance; higher is fitter', secF, COL.blue],
+      ['rest', 'Rest you need', 'seconds of rest per minute of work; lower is fitter', v => Math.round(v) + ' s', COL.blue],
+      ['reads', 'Read window', 'seconds to react, averaged over the moves; lower is faster', v => v.toFixed(2) + ' s', COL.blue],
+      ['tol', 'Explosive reps', 'shots and sprawls before they slow down; higher is fitter', v => Math.round(v) + '', COL.blue]
+    ];
+    // each move, the last 4 weeks against the 4 before
+    const trials = (from, to) => h.filter(x => { const t = Date.parse(x.date); return t >= from && t < to; }).flatMap(x => x.trials || []).filter(t => !t.undetected);
+    const recent = trials(now - 28*864e5, now + 1), before = trials(now - 56*864e5, now - 28*864e5);
+    const ms = (ts, m) => { const s2 = RT.moveStats(ts)[m]; return s2.n ? `${Math.round(s2.hitRate*100)}% of ${s2.n}${s2.rtMed != null ? ', ' + Math.round(s2.rtMed*1000) + ' ms' : ''}` : '–'; };
+    el.innerHTML = head + `
+      <div class="tiles">
+        <div><b>${ser.length}</b><span>sessions</span></div>
+        <div><b>${Math.round(mins)}</b><span>minutes trained</span></div>
+        <div><b>${st.week}</b><span>sessions, last 7 days</span></div>
+        <div><b>${longest ? secF(longest) : '–'}</b><span>longest round held</span></div>
+      </div>
+      ${charts.map(([k, title, sub]) => `<div class="card"><h3>${title}</h3><div class="sub">${sub}</div><div id="pc_${k}"></div></div>`).join('')}
+      <div class="card"><h3>Where your stance sat</h3><div class="sub">share of each session's rounds</div>${legendHTML(SPLIT())}<div id="pc_split"></div></div>
+      <div class="card"><h3>Weekly load</h3><div class="sub">minutes of work by round type, plus shots and sprawls</div>${legendHTML([{name:'This week', color:COL.blue}, {name:'Your usual week', color:COL.muted, line:true}])}<div id="pc_week"></div></div>
+      <div class="card"><h3>Moves</h3><div class="sub">on time and median read: the last 4 weeks, and the 4 before</div>
+        <div class="tablewrap"><table class="data"><tr><th>Move</th><th>Last 4 weeks</th><th>4 weeks before</th></tr>
+        ${RT.PROG.moves.map(m => `<tr><td>${RT.MOVE_NAMES[m][0].toUpperCase() + RT.MOVE_NAMES[m].slice(1)}</td><td>${ms(recent, m)}</td><td>${ms(before, m)}</td></tr>`).join('')}</table></div></div>
+      <details class="card"><summary style="cursor:pointer;font-size:.85rem;color:var(--muted)">Every session as a table</summary>
+        <div class="tablewrap"><table class="data"><tr><th>Date</th><th>Min</th><th>Day</th><th>In stance</th><th>High</th><th>Upright</th><th>Rounds held</th><th>Rest/min</th><th>Reads</th></tr>
+        ${ser.slice().reverse().map(p => `<tr><td>${shortDate(p.t)}</td><td>${p.minutes != null ? p.minutes : ''}</td><td>${p.day && RT.DAYS[p.day] ? RT.DAYS[p.day].name.replace(' day', '').replace('First session', 'First') : p.open ? 'Open' : ''}</td><td>${p.stance != null ? Math.round(p.stance*100) + '%' : ''}</td><td>${p.high != null ? Math.round(p.high*100) + '%' : ''}</td><td>${p.upright != null ? Math.round(p.upright*100) + '%' : ''}</td><td>${secF(p.cap)}</td><td>${Math.round(p.rest)} s</td><td>${p.reads.toFixed(2)} s</td></tr>`).join('')}</table></div></details>` + back;
+    for (const [k, title, , fmt, color] of charts) lineChart($('pc_' + k), ser.map(p => ({t:p.t, v:p[k], tip:p.minutes ? p.minutes + ' min session' : ''})), {fmt, color, title});
+    const withSplit = ser.filter(p => p.stance != null).slice(-20);
+    if (withSplit.length) stackChart($('pc_split'), withSplit.map(p => ({label:shortDate(p.t), tip:`${shortDate(p.t)}${p.minutes ? ', ' + p.minutes + ' min' : ''}`, parts:{stance:p.stance, high:p.high, upright:p.upright, low:p.low}})), SPLIT());
+    if (wk.length) weekChart($('pc_week'), wk.slice(-12));
+  }
+  $('progressBack').onclick = () => { $('progress').hidden = true; $('menu').hidden = false; };
+}
+$('progressBtn').addEventListener('click', showProgress);
+
 /* ---------- debrief ---------- */
 const mean = a => a.length ? a.reduce((x, y) => x + y, 0)/a.length : null;
 function buildDebrief(){
@@ -2685,10 +2918,10 @@ function buildDebrief(){
       <div><b>${reac === null ? '–' : Math.round(reac*1000)}</b><span>reaction, ms</span></div>
       <div><b>${rec === null ? '–' : rec.toFixed(1)}</b><span>recovery, s</span></div>
     </div>
-    <div class="card"><h3>In stance by round</h3>
-      <div class="bars">${per.map((v, i) => `<div><span>${v}</span><i style="height:${Math.max(4, v)}%;--c:var(--${PHASE[rs[i].phase].c})"></i></div>`).join('')}</div>
+    <div class="card"><h3>Where your stance sat, round by round</h3>${legendHTML(SPLIT())}<div id="dbSplit"></div>
       <div class="note">${note}</div>
     </div>
+    ${compareCard()}
     <div class="card"><h3>Session</h3><div class="rows">
       <div><span>Drill calls on time</span><span>${hits} of ${hits + misses}</span></div>
       ${lateN + missed ? `<div><span>Late, missed</span><span>${lateN} late (slow read), ${missed} missed (not done)</span></div>` : ''}
@@ -2700,10 +2933,32 @@ function buildDebrief(){
     ${trainDebrief()}
     <div class="actions"><button class="primary" id="againBtn">Run it again</button><button class="secondary" id="menuBtn">Change session</button></div>`;
   $('debrief').hidden = false; $('debrief').scrollTop = 0;
+  stackChart($('dbSplit'), rs.map((r, i) => {
+    const w = Math.max(r.work, 0.01), st = r.inBand/w, hi = (r.highT || 0)/w, up = (r.upT || 0)/w;
+    return {label:String(i + 1), tip:`Round ${i + 1} · ${roundTitle(S.plan[S.rounds.indexOf(r)] || {phase:r.phase})} · ${Math.round(r.work)} s`, parts:{stance:st, high:hi, upright:up, low:Math.max(0, 1 - st - hi - up)}};
+  }), SPLIT());
   // camera play goes again with this session's calibration (the camera is still running)
   $('againBtn').onclick = () => { const cam = !!S.cam; startSession(S.auto, cam); if (cam) getSet(); };
   $('menuBtn').onclick = quit;
   say(`Session done. In stance ${pct} percent.${reac === null ? '' : ' Reaction ' + Math.round(reac*1000) + ' milliseconds.'}`, true);
+}
+
+// This session against your last 5: plain numbers, no verdicts.
+function compareCard(){
+  const RT = globalThis.RoomTime, rec = S.savedRec;
+  if (!rec || !RT) return '';
+  const c = RT.sessionCompare(rec, loadHistory(), 5);
+  if (!c.n) return '';
+  const pctK = {stance:1, high:1, upright:1, onTime:1};
+  const f = (k, v) => v == null ? '–' : pctK[k] ? Math.round(v*100) + '%' : k === 'longest' ? (v >= 60 ? `${Math.floor(v/60)}:${String(Math.round(v%60)).padStart(2, '0')}` : Math.round(v) + ' s') : (Math.round(v*10)/10).toString();
+  const d = r => {
+    if (r.now == null || r.before == null) return '';
+    const dv = pctK[r.key] ? Math.round((r.now - r.before)*100) : Math.round((r.now - r.before)*10)/10;
+    return dv === 0 ? 'same' : (dv > 0 ? '+' : '−') + Math.abs(dv) + (pctK[r.key] ? ' pts' : r.key === 'longest' ? ' s' : '');
+  };
+  return `<div class="card"><h3>Against your last ${c.n} session${c.n === 1 ? '' : 's'}</h3>
+    <div class="tablewrap"><table class="data"><tr><th></th><th>This session</th><th>Last ${c.n}</th><th>Change</th></tr>
+    ${c.rows.filter(r => r.now != null || r.before != null).map(r => `<tr><td>${r.label}</td><td>${f(r.key, r.now)}</td><td>${f(r.key, r.before)}</td><td>${d(r)}</td></tr>`).join('')}</table></div></div>`;
 }
 
 // The saved session's numbers for each move, your level and what the next session will be. Plain facts.

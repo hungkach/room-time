@@ -257,8 +257,14 @@ try {
   const o = hist[hist.length - 1] || {};
   check(hist.length === 3 && o.open && !o.partial && o.rounds.length === op.r + 1, `ending an open session finishes it: ${o.rounds && o.rounds.length} rounds saved, open ${o.open}, partial ${o.partial}`);
   check(await page.isVisible('#debrief'), 'and shows the debrief');
+  check(/Against your last \d session/.test(await page.textContent('#debriefIn')) && await page.$$eval('#dbSplit svg path', (els) => els.length) > 0, 'the debrief compares it with your last sessions and splits each round');
+
   await page.click('#menuBtn'); await page.waitForTimeout(300);
   await page.click('#openBtn');
+  await page.click('#progressBtn'); await page.waitForTimeout(300);
+  const pr = await page.evaluate(() => ({ charts: document.querySelectorAll('#progressIn .chart svg').length, tiles: document.querySelector('#progressIn .tiles b').textContent }));
+  check(pr.charts >= 6 && pr.tiles === '3', `Progress: ${pr.charts} charts over ${pr.tiles} sessions`);
+  await page.click('#progressBack');
   const csv = await page.evaluate(() => RoomTime.toCSV(JSON.parse(localStorage.getItem('roomtime.history'))).trim().split('\n'));
   check(csv.length === 4 && /^date,mode,kind/.test(csv[0]), 'the CSV has a row per session');
   // back up, then restore that file plus one session from another device: sessions merge once each
